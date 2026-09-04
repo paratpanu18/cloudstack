@@ -183,7 +183,7 @@ public class DynamicRoleBasedAPIAccessChecker extends AdapterBase implements API
             throw new PermissionDeniedException(String.format("Account role for user id [%s] cannot be found.", user.getUuid()));
         }
         if (accountRole.getRoleType() == RoleType.Admin && accountRole.getId() == RoleType.Admin.getId()) {
-            logger.info("Account for user id {} is Root Admin or Domain Admin, all APIs are allowed.", user.getUuid());
+            logger.debug("Account for user id {} is Root Admin or Domain Admin, all APIs are allowed.", user.getUuid());
             return true;
         }
         List<RolePermission> allPermissions = roleAndPermissions.second();

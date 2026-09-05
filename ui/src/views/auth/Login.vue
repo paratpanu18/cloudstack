@@ -16,40 +16,20 @@
 // under the License.
 
 <template>
-  <div class="login-container" :class="{ dark: darkMode }">
-    <!-- Left Side - Image Only -->
-    <div class="login-image-container">
-      <div class="image-overlay"></div>
+  <div class="login-container">
+    <!-- Subtle pulsing background glow -->
+    <div class="bg-pulse" aria-hidden="true">
+      <span class="sweep"></span>
+      <span class="pulse-glow g1"></span>
+      <span class="pulse-glow g2"></span>
+      <span class="pulse-glow g3"></span>
     </div>
 
-    <!-- Right Side - Login Form -->
+    <!-- Login Form -->
     <div class="login-form-container">
-      <a-tooltip :title="darkMode ? $t('label.light.mode') : $t('label.dark.mode')">
-        <a-button class="theme-toggle" type="text" @click="toggleDarkMode">
-          <svg
-v-if="!darkMode"
-viewBox="0 0 24 24"
-width="18"
-height="18"
-fill="currentColor"
-            aria-hidden="true">
-            <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
-          </svg>
-          <svg
-v-else
-viewBox="0 0 24 24"
-width="18"
-height="18"
-fill="currentColor"
-            aria-hidden="true">
-            <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0a.996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37a.996.996 0 0 0-1.41 0a.996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41l-1.06-1.06zm1.06-10.96a.996.996 0 0 0 0-1.41a.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36a.996.996 0 0 0 0-1.41a.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
-          </svg>
-        </a-button>
-      </a-tooltip>
       <div class="login-form-wrapper">
         <div class="login-header">
           <img :src="logo" alt="Logo" class="brand-logo" />
-          <!-- <p class="login-subtitle">Sign in to your account</p> -->
         </div>
 
         <a-form
@@ -67,7 +47,7 @@ fill="currentColor"
               class="domain-select"
               v-model:value="form.domain"
               :options="domainOptions"
-              :dropdownClassName="darkMode ? 'domain-dropdown-dark' : undefined"
+              dropdownClassName="login-dropdown"
               :filter-option="false"
               backfill
               @search="onDomainSearch"
@@ -84,120 +64,64 @@ fill="currentColor"
               </a-input>
             </a-auto-complete>
           </a-form-item>
-          <a-tabs
-            class="tab-center"
-            :activeKey="customActiveKey"
-            size="large"
-            :tabBarStyle="{ textAlign: 'center', borderBottom: 'unset' }"
-            @change="handleTabClick"
-            :animated="false"
-          >
-            <a-tab-pane key="cs">
-              <template #tab>
-                <span>
-                  <safety-outlined />
-                  {{ $t('label.login.portal') }}
-                </span>
+          <a-form-item v-if="$config.multipleServer" name="server" ref="server">
+            <a-select
+              size="large"
+              :placeholder="$t('server')"
+              v-model:value="form.server"
+              dropdownClassName="login-dropdown"
+              @change="onChangeServer"
+              showSearch
+              optionFilterProp="label"
+              :filterOption="(input, option) => {
+                return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
+              }">
+              <a-select-option v-for="item in $config.servers" :key="(item.apiHost || '') + item.apiBase" :label="item.name">
+                <template #prefix>
+                  <database-outlined />
+                </template>
+                {{ item.name }}
+              </a-select-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item ref="username" name="username">
+            <a-input
+              size="large"
+              type="text"
+              v-focus="true"
+              :placeholder="$t('label.username')"
+              v-model:value="form.username"
+            >
+              <template #prefix>
+                <user-outlined />
               </template>
-              <a-form-item v-if="$config.multipleServer" name="server" ref="server">
-                <a-select
-                  size="large"
-                  :placeholder="$t('server')"
-                  v-model:value="form.server"
-                  @change="onChangeServer"
-                  showSearch
-                  optionFilterProp="label"
-                  :filterOption="(input, option) => {
-                    return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
-                  }">
-                  <a-select-option v-for="item in $config.servers" :key="(item.apiHost || '') + item.apiBase" :label="item.name">
-                    <template #prefix>
-                      <database-outlined />
-                    </template>
-                    {{ item.name }}
-                  </a-select-option>
-                </a-select>
-              </a-form-item>
-              <a-form-item ref="username" name="username">
-                <a-input
-                  size="large"
-                  type="text"
-                  v-focus="true"
-                  :placeholder="$t('label.username')"
-                  v-model:value="form.username"
-                >
-                  <template #prefix>
-                    <user-outlined />
-                  </template>
-                </a-input>
-              </a-form-item>
-              <a-form-item ref="password" name="password">
-                <a-input-password
-                  size="large"
-                  type="password"
-                  autocomplete="false"
-                  :placeholder="$t('label.password')"
-                  v-model:value="form.password"
-                >
-                  <template #prefix>
-                    <lock-outlined />
-                  </template>
-                </a-input-password>
-              </a-form-item>
-              <a-form-item ref="project" name="project" v-if="$config.displayProjectFieldOnLogin">
-                <a-input
-                  size="large"
-                  type="text"
-                  :placeholder="$t('label.project')"
-                  v-model:value="form.project"
-                >
-                  <template #prefix>
-                    <block-outlined />
-                  </template>
-                </a-input>
-              </a-form-item>
-            </a-tab-pane>
-            <a-tab-pane key="saml" :disabled="idps.length === 0">
-              <template #tab>
-                <span>
-                  <audit-outlined />
-                  {{ $t('label.login.single.signon') }}
-                </span>
+            </a-input>
+          </a-form-item>
+          <a-form-item ref="password" name="password">
+            <a-input-password
+              size="large"
+              type="password"
+              autocomplete="false"
+              :placeholder="$t('label.password')"
+              v-model:value="form.password"
+            >
+              <template #prefix>
+                <lock-outlined />
               </template>
-              <a-form-item v-if="$config.multipleServer" name="server" ref="server">
-                <a-select
-                  size="large"
-                  :placeholder="$t('server')"
-                  v-model:value="form.server"
-                  @change="onChangeServer"
-                  showSearch
-                  optionFilterProp="label"
-                  :filterOption="(input, option) => {
-                    return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
-                  }" >
-                  <a-select-option v-for="item in $config.servers" :key="(item.apiHost || '') + item.apiBase" :label="item.name">
-                    <template #prefix>
-                      <database-outlined />
-                    </template>
-                    {{ item.name }}
-                  </a-select-option>
-                </a-select>
-              </a-form-item>
-              <a-form-item name="idp" ref="idp">
-                <a-select
-                  v-model:value="form.idp"
-                  showSearch
-                  optionFilterProp="label"
-                  :filterOption="(input, option) => {
-                    return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
-                  }" >
-                  <a-select-option v-for="(idp, idx) in idps" :key="idx" :value="idp.id" :label="idp.orgName">
-                    {{ idp.orgName }}
-                  </a-select-option>
-                </a-select>
-              </a-form-item>
-            </a-tab-pane>
-          </a-tabs>
+            </a-input-password>
+          </a-form-item>
+          <a-form-item ref="project" name="project" v-if="$config.displayProjectFieldOnLogin">
+            <a-input
+              size="large"
+              type="text"
+              :placeholder="$t('label.project')"
+              v-model:value="form.project"
+            >
+              <template #prefix>
+                <block-outlined />
+              </template>
+            </a-input>
+          </a-form-item>
 
           <a-form-item>
             <a-button
@@ -221,6 +145,34 @@ fill="currentColor"
               </router-link>
             </a-col>
           </a-row>
+          <div class="sso-section" v-if="idps.length > 0">
+            <p class="or">{{ $t('label.or.sign.in.with') }}</p>
+            <a-form-item name="idp" ref="idp">
+              <a-select
+                v-model:value="form.idp"
+                size="large"
+                dropdownClassName="login-dropdown"
+                showSearch
+                optionFilterProp="label"
+                :placeholder="$t('label.login.single.signon')"
+                :filterOption="(input, option) => {
+                  return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
+                }" >
+                <a-select-option v-for="(idp, idx) in idps" :key="idx" :value="idp.id" :label="idp.orgName">
+                  {{ idp.orgName }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-button
+              size="large"
+              block
+              class="sso-button"
+              @click="handleSamlLogin"
+            >
+              <audit-outlined />
+              <span>{{ $t('label.login.single.signon') }}</span>
+            </a-button>
+          </div>
           <div class="content" v-if="socialLogin">
             <p class="or">{{ $t('label.or.sign.in.with') }}</p>
           </div>
@@ -254,7 +206,7 @@ import { getAPI, postAPI } from '@/api'
 import store from '@/store'
 import { mapActions } from 'vuex'
 import { sourceToken } from '@/utils/request'
-import { SERVER_MANAGER, LAST_SELECTED_DOMAIN, LOGIN_THEME } from '@/store/mutation-types'
+import { SERVER_MANAGER, LAST_SELECTED_DOMAIN } from '@/store/mutation-types'
 import { setStore, getStore } from '@/utils/storage'
 import TranslationMenu from '@/components/header/TranslationMenu'
 
@@ -265,9 +217,6 @@ export default {
   data () {
     return {
       idps: [],
-      darkMode: false,
-      customActiveKey: 'cs',
-      customActiveKeyOauth: false,
       loginBtn: false,
       email: '',
       secretcode: '',
@@ -360,7 +309,6 @@ export default {
     }
   },
   created () {
-    this.initTheme()
     if (this.$config.multipleServer) {
       this.server = this.$localStorage.get(SERVER_MANAGER) || this.$config.servers[0]
     }
@@ -377,31 +325,6 @@ export default {
   },
   methods: {
     ...mapActions(['Login', 'Logout', 'OauthLogin']),
-    initTheme () {
-      const stored = this.$localStorage.get(LOGIN_THEME)
-      if (stored === 'dark' || stored === 'light') {
-        this.darkMode = stored === 'dark'
-        return
-      }
-      // no explicit choice yet, follow the browser setting
-      const query = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)')
-      if (!query) {
-        return
-      }
-      this.darkMode = query.matches
-      const handler = (e) => {
-        if (!this.$localStorage.get(LOGIN_THEME)) {
-          this.darkMode = e.matches
-        }
-      }
-      if (query.addEventListener) {
-        query.addEventListener('change', handler)
-      }
-    },
-    toggleDarkMode () {
-      this.darkMode = !this.darkMode
-      this.$localStorage.set(LOGIN_THEME, this.darkMode ? 'dark' : 'light')
-    },
     initForm () {
       this.formRef = ref()
       const savedDomain = getStore(LAST_SELECTED_DOMAIN)
@@ -450,29 +373,24 @@ export default {
       return match ? match.path : domain
     },
     setRules () {
-      if (this.customActiveKey === 'cs' && this.customActiveKeyOauth === false) {
-        this.rules.username = [
-          {
-            required: true,
-            message: this.$t('message.error.username'),
-            trigger: 'change'
-          },
-          {
-            validator: this.handleUsernameOrEmail,
-            trigger: 'change'
-          }
-        ]
-        this.rules.password = [
-          {
-            required: true,
-            message: this.$t('message.error.password'),
-            trigger: 'change'
-          }
-        ]
-      } else {
-        this.rules.username = []
-        this.rules.password = []
-      }
+      this.rules.username = [
+        {
+          required: true,
+          message: this.$t('message.error.username'),
+          trigger: 'change'
+        },
+        {
+          validator: this.handleUsernameOrEmail,
+          trigger: 'change'
+        }
+      ]
+      this.rules.password = [
+        {
+          required: true,
+          message: this.$t('message.error.password'),
+          trigger: 'change'
+        }
+      ]
     },
     fetchData () {
       getAPI('listLoginDomains').then(response => {
@@ -542,10 +460,6 @@ export default {
         state.loginType = 1
       }
       return Promise.resolve()
-    },
-    handleTabClick (key) {
-      this.customActiveKey = key
-      this.setRules()
     },
     handleGithubProviderAndDomain () {
       this.handleDomain()
@@ -623,54 +537,31 @@ export default {
           this.axios.defaults.baseURL = (this.server.apiHost || '') + this.server.apiBase
           store.dispatch('SetServer', this.server)
         }
-        if (this.customActiveKey === 'cs') {
-          const loginParams = { ...values }
-          delete loginParams.username
-          loginParams[!this.state.loginType ? 'email' : 'username'] = values.username
-          loginParams.password = values.password
-          loginParams.domain = this.resolveDomain(values.domain)
-          if (!loginParams.domain) {
-            loginParams.domain = '/'
-          }
-          this.Login(loginParams)
-            .then((res) => this.loginSuccess(res))
-            .catch(err => {
-              this.requestFailed(err)
-              this.state.loginBtn = false
-            })
-        } else if (this.customActiveKey === 'saml') {
-          this.state.loginBtn = false
-          var samlUrl = this.$config.apiBase + '?command=samlSso'
-          if (values.idp) {
-            samlUrl += ('&idpid=' + values.idp)
-          }
-          window.location.href = samlUrl
-        }
-      }).catch(error => {
-        this.formRef.value.scrollToField(error.errorFields[0].name)
-      })
-    },
-    handleSubmitOauth (provider) {
-      this.customActiveKeyOauth = true
-      this.setRules()
-      this.formRef.value.validate().then(() => {
-        const values = toRaw(this.form)
         const loginParams = { ...values }
         delete loginParams.username
-        loginParams.email = this.email
-        loginParams.provider = provider
-        loginParams.secretcode = this.secretcode
+        loginParams[!this.state.loginType ? 'email' : 'username'] = values.username
+        loginParams.password = values.password
         loginParams.domain = this.resolveDomain(values.domain)
         if (!loginParams.domain) {
           loginParams.domain = '/'
         }
-        this.OauthLogin(loginParams)
+        this.Login(loginParams)
           .then((res) => this.loginSuccess(res))
           .catch(err => {
             this.requestFailed(err)
             this.state.loginBtn = false
           })
+      }).catch(error => {
+        this.formRef.value.scrollToField(error.errorFields[0].name)
       })
+    },
+    handleSamlLogin () {
+      var samlUrl = this.$config.apiBase + '?command=samlSso'
+      const values = toRaw(this.form)
+      if (values.idp) {
+        samlUrl += ('&idpid=' + values.idp)
+      }
+      window.location.href = samlUrl
     },
     async loginSuccess (res) {
       this.$notification.destroy()
@@ -737,81 +628,136 @@ export default {
 </script>
 
 <style lang="less" scoped>
-html, body {
-  margin: 0;
-  padding: 0;
-}
-
 .login-container {
+  position: relative;
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
   margin: 0;
   padding: 0;
-  background: #ffffff;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ffffff 0%, #fff7ef 100%);
+}
 
-  @media (max-width: 768px) {
-    flex-direction: column;
+.bg-pulse {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.sweep {
+  position: absolute;
+  top: -40%;
+  left: -35%;
+  width: 70%;
+  height: 180%;
+  background: linear-gradient(100deg, rgba(246, 135, 31, 0) 32%, rgba(246, 135, 31, 0.08) 50%, rgba(246, 135, 31, 0) 68%);
+  will-change: transform, opacity;
+  animation: bg-sweep 14s ease-in-out infinite;
+}
+
+.pulse-glow {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform, opacity;
+  animation: bg-pulse 8s ease-in-out infinite;
+
+  &.g1 {
+    top: -18%;
+    left: -10%;
+    width: clamp(360px, 48vw, 720px);
+    height: clamp(360px, 48vw, 720px);
+    background: radial-gradient(circle at center, rgba(246, 135, 31, 0.3) 0%, rgba(246, 135, 31, 0.11) 45%, rgba(246, 135, 31, 0) 70%);
+  }
+
+  &.g2 {
+    right: -12%;
+    bottom: -20%;
+    width: clamp(400px, 55vw, 820px);
+    height: clamp(400px, 55vw, 820px);
+    background: radial-gradient(circle at center, rgba(246, 135, 31, 0.24) 0%, rgba(246, 135, 31, 0.09) 45%, rgba(246, 135, 31, 0) 70%);
+    animation-duration: 10s;
+    animation-delay: -4s;
+  }
+
+  &.g3 {
+    top: 34%;
+    right: 18%;
+    width: clamp(220px, 26vw, 380px);
+    height: clamp(220px, 26vw, 380px);
+    background: radial-gradient(circle at center, rgba(246, 135, 31, 0.18) 0%, rgba(246, 135, 31, 0.07) 45%, rgba(246, 135, 31, 0) 70%);
+    animation-duration: 12s;
+    animation-delay: -2.5s;
   }
 }
 
-.login-image-container {
-  flex: 1;
-  position: relative;
-  background-image: url('/assets/login-banner.png');
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  min-height: 100vh;
+@keyframes bg-pulse {
+  0%, 100% {
+    transform: scale(1) translate3d(0, 0, 0);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.12) translate3d(4%, -3.5%, 0);
+    opacity: 1;
+  }
+}
 
-  @media (max-width: 768px) {
-    display: none;
-    min-height: 200px;
-    flex: none;
+@keyframes bg-sweep {
+  0%, 100% {
+    transform: rotate(10deg) translate3d(-55%, 0, 0);
+    opacity: 0;
+  }
+  50% {
+    transform: rotate(10deg) translate3d(55%, 0, 0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .pulse-glow {
+    &.g1 {
+      width: 280px;
+      height: 280px;
+    }
+
+    &.g2 {
+      width: 320px;
+      height: 320px;
+    }
+
+    &.g3 {
+      width: 200px;
+      height: 200px;
+    }
   }
 
-  .image-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    // background: linear-gradient(135deg, rgba(24, 144, 255, 0.85) 0%, rgba(9, 109, 217, 0.9) 100%);
+  .sweep {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-glow,
+  .sweep {
+    animation: none;
   }
 }
 
 .login-form-container {
+  position: relative;
+  z-index: 1;
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px;
-  background: #ffffff;
-  min-height: 100vh;
-  position: relative;
+  width: 100%;
+  padding: 48px 40px;
 
   @media (max-width: 768px) {
-    min-height: auto;
     padding: 40px 24px;
-  }
-}
-
-.theme-toggle {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  font-size: 18px;
-  color: #8c8c8c;
-
-  &:hover {
-    color: #1890ff;
-    background: rgba(0, 0, 0, 0.04);
   }
 }
 
@@ -825,20 +771,15 @@ html, body {
   text-align: center;
 
   .brand-logo {
-    max-width: 450px;
-    height: 100px;
-    margin: 0 auto 24px;
+    max-width: 520px;
+    height: 120px;
+    margin: 0 auto 10px;
     display: block;
 
     @media (max-width: 768px) {
-      max-width: 240px;
+      max-width: 280px;
+      height: auto;
     }
-  }
-
-  .login-subtitle {
-    font-size: 18px;
-    color: #8c8c8c;
-    margin: 0;
   }
 }
 
@@ -851,7 +792,7 @@ html, body {
   color: #8c8c8c;
 
   :deep(a) {
-    color: #1890ff;
+    color: #f6871f;
     text-decoration: none;
 
     &:hover {
@@ -863,44 +804,23 @@ html, body {
 .user-layout-login {
   width: 100%;
 
-  :deep(.ant-tabs-nav) {
-    margin-bottom: 32px;
-  }
-
-  :deep(.ant-tabs-tab) {
-    padding: 12px 20px;
-    font-size: 15px;
-    font-weight: 500;
-
-    &.ant-tabs-tab-active {
-      .ant-tabs-tab-btn {
-        color: #1890ff;
-      }
-    }
-  }
-
-  :deep(.ant-tabs-ink-bar) {
-    background: #1890ff;
-    height: 3px;
-  }
-
   :deep(.ant-form-item) {
     margin-bottom: 20px;
   }
 
   :deep(.ant-input-affix-wrapper) {
     padding: 10px 15px;
-    border-radius: 6px;
+    border-radius: 8px;
     border: 1px solid #d9d9d9;
 
     &:hover {
-      border-color: #40a9ff;
+      border-color: #fb9a3d;
     }
 
     &:focus,
     &.ant-input-affix-wrapper-focused {
-      border-color: #40a9ff;
-      box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+      border-color: #f6871f;
+      box-shadow: 0 0 0 2px rgba(246, 135, 31, 0.12);
     }
 
     .ant-input {
@@ -921,35 +841,35 @@ html, body {
 
   :deep(.ant-input:not(.ant-input-affix-wrapper .ant-input)) {
     padding: 10px 15px;
-    border-radius: 6px;
+    border-radius: 8px;
     border: 1px solid #d9d9d9;
 
     &:hover {
-      border-color: #40a9ff;
+      border-color: #fb9a3d;
     }
 
     &:focus {
-      border-color: #40a9ff;
-      box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+      border-color: #f6871f;
+      box-shadow: 0 0 0 2px rgba(246, 135, 31, 0.12);
     }
   }
 
   :deep(.ant-select) {
     .ant-select-selector {
       padding: 6px 15px !important;
-      border-radius: 6px !important;
+      border-radius: 8px !important;
       border: 1px solid #d9d9d9 !important;
       height: auto !important;
       min-height: 46px;
     }
 
     &:hover .ant-select-selector {
-      border-color: #40a9ff !important;
+      border-color: #fb9a3d !important;
     }
 
     &.ant-select-focused .ant-select-selector {
-      border-color: #40a9ff !important;
-      box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1) !important;
+      border-color: #f6871f !important;
+      box-shadow: 0 0 0 2px rgba(246, 135, 31, 0.12) !important;
     }
 
     .ant-select-selection-item {
@@ -991,32 +911,58 @@ html, body {
     font-weight: 600;
     height: 46px;
     width: 100%;
-    border-radius: 6px;
-    background: #1890ff;
+    border-radius: 8px;
+    background: #f6871f;
     border: none;
-    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
+    box-shadow: 0 2px 8px rgba(246, 135, 31, 0.35);
     transition: all 0.3s ease;
 
     &:hover:not(:disabled) {
-      background: #40a9ff;
+      background: #fb9a3d;
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(24, 144, 255, 0.4);
+      box-shadow: 0 4px 14px rgba(246, 135, 31, 0.45);
     }
 
     &:active:not(:disabled) {
       transform: translateY(0);
-      background: #096dd9;
+      background: #e0701a;
     }
   }
 
   .forgot-password-link {
-    color: #1890ff;
+    color: #f6871f;
     font-weight: 500;
     transition: color 0.3s ease;
 
     &:hover {
-      color: #40a9ff;
+      color: #e0701a;
       text-decoration: underline;
+    }
+  }
+
+  .sso-section {
+    margin-top: 4px;
+
+    .or {
+      margin: 24px 0 20px;
+    }
+  }
+
+  .sso-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 46px;
+    font-size: 15px;
+    font-weight: 500;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+
+    &:hover {
+      color: #f6871f;
+      border-color: #fb9a3d;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     }
   }
 
@@ -1039,7 +985,7 @@ html, body {
     height: 44px;
     margin-bottom: 10px;
     font-size: 15px;
-    border-radius: 6px;
+    border-radius: 8px;
 
     &:hover {
       transform: translateY(-1px);
@@ -1075,154 +1021,32 @@ html, body {
     }
   }
 }
-
-.login-container.dark {
-  background: #141414;
-
-  .login-form-container {
-    background: #141414;
-  }
-
-  .theme-toggle {
-    color: rgba(255, 255, 255, 0.65);
-
-    &:hover {
-      color: #40a9ff;
-      background: rgba(255, 255, 255, 0.08);
-    }
-  }
-
-  .field-label {
-    color: rgba(255, 255, 255, 0.65);
-  }
-
-  .login-footer {
-    border-top-color: #303030;
-    color: rgba(255, 255, 255, 0.45);
-
-    :deep(a) {
-      color: #40a9ff;
-
-      &:hover {
-        color: #69c0ff;
-      }
-    }
-  }
-
-  .forgot-password-link {
-    color: #40a9ff;
-
-    &:hover {
-      color: #69c0ff;
-    }
-  }
-
-  .or {
-    color: rgba(255, 255, 255, 0.45);
-
-    &::before,
-    &::after {
-      background: #424242;
-    }
-  }
-
-  .user-layout-login {
-    :deep(.ant-tabs-tab) {
-      color: rgba(255, 255, 255, 0.65);
-
-      &:hover {
-        color: #40a9ff;
-      }
-
-      &.ant-tabs-tab-active {
-        .ant-tabs-tab-btn {
-          color: #1890ff;
-        }
-      }
-    }
-
-    :deep(.ant-input-affix-wrapper),
-    :deep(.ant-input) {
-      background: #1f1f1f;
-      border-color: #424242;
-      color: rgba(255, 255, 255, 0.85);
-
-      &::placeholder {
-        color: rgba(255, 255, 255, 0.3);
-      }
-
-      &:hover {
-        border-color: #40a9ff;
-      }
-    }
-
-    :deep(.ant-input-affix-wrapper) {
-      .ant-input-prefix,
-      .ant-input-suffix {
-        color: rgba(255, 255, 255, 0.45);
-      }
-    }
-
-    :deep(.ant-select) {
-      .ant-select-selector {
-        background: #1f1f1f !important;
-        border-color: #424242 !important;
-      }
-
-      .ant-select-selection-item {
-        color: rgba(255, 255, 255, 0.85);
-      }
-
-      .ant-select-arrow {
-        color: rgba(255, 255, 255, 0.45);
-      }
-    }
-
-    :deep(.ant-btn-default) {
-      background: #1f1f1f;
-      border-color: #424242;
-      color: rgba(255, 255, 255, 0.85);
-
-      &:hover,
-      &:focus {
-        border-color: #40a9ff;
-        color: #40a9ff;
-      }
-    }
-  }
-}
 </style>
 
 <style lang="less">
-// The domain autocomplete dropdown is rendered in a portal attached to <body>,
-// outside the login container, so it cannot be themed by the scoped block above.
-// !important is used deliberately: the app's global dark-mode theme ships its own
-// dropdown hover rules with !important, and antd's own rules would otherwise win.
-.ant-select-dropdown.domain-dropdown-dark {
-  background-color: #1f1f1f !important;
-
+// The login dropdowns (domain, server, IdP) render in portals attached to <body>,
+// outside the login container, so they cannot be themed by the scoped block.
+// These rules override the app-wide blue dropdown hover from style/vars.less,
+// which ships with !important, so !important plus a higher specificity is needed.
+.ant-select-dropdown.login-dropdown {
   .ant-select-item {
-    color: rgba(255, 255, 255, 0.85) !important;
+    border-radius: 6px;
   }
 
   .ant-select-item:hover,
   .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
-    background: rgba(255, 255, 255, 0.08) !important;
-    color: rgba(255, 255, 255, 0.85) !important;
+    background-color: #fff3e6 !important;
+    color: #e0701a !important;
   }
 
   .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
-    background: rgba(24, 144, 255, 0.15) !important;
-    color: #40a9ff !important;
+    background-color: rgba(246, 135, 31, 0.12) !important;
+    color: #e0701a !important;
 
-    &:hover {
-      background: rgba(24, 144, 255, 0.25) !important;
-      color: #69c0ff !important;
+    &:hover,
+    &.ant-select-item-option-active {
+      background-color: rgba(246, 135, 31, 0.22) !important;
     }
-  }
-
-  .ant-empty-description {
-    color: rgba(255, 255, 255, 0.45) !important;
   }
 }
 </style>

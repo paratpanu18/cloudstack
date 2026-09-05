@@ -273,7 +273,7 @@ export default {
       secretcode: '',
       oauthexclude: '',
       socialLogin: false,
-      naclFooter: 'Built with 💙 by <a href="https://www.ce-nacl.com" target="_blank" rel="noopener">Network and Cloud Laboratory (NaCl)</a><br>On top of Apache CloudStack',
+      naclFooter: 'Made with 💙 by <a href="https://www.ce-nacl.com" target="_blank" rel="noopener">Network and Cloud Laboratory (NaCl)</a><br>Department of Computer Engineering, KMTIL',
       googleprovider: false,
       githubprovider: false,
       keycloakprovider: false,

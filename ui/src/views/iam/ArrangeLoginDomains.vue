@@ -188,6 +188,6 @@ export default {
 
 .drag-ghost {
   opacity: 0.4;
-  background: #e6f7ff;
+  background: var(--primary-1, #fff3e6);
 }
 </style>

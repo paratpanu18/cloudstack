@@ -129,6 +129,7 @@
 
 <script>
 import SettingItem from '@/components/view/SettingItem'
+import { applyCssVariables } from '@/utils/guiTheme'
 
 export default {
   name: 'Setting',
@@ -246,6 +247,7 @@ export default {
         this.uiSettings['@logo-background-color'] = value
       }
       window.less.modifyVars(this.uiSettings)
+      applyCssVariables(this.uiSettings)
     },
     onClose () {
       this.parentToggleSetting(false)
@@ -266,6 +268,7 @@ export default {
 
       this.$config.theme = this.originalSetting
       window.less.modifyVars(this.$config.theme)
+      applyCssVariables(this.$config.theme)
       this.$message.success(this.$t('label.success'))
     },
     downloadObjectAsJson (exportObj) {

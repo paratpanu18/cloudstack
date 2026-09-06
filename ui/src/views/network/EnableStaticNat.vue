@@ -344,7 +344,7 @@ export default {
       padding-left: 20px;
 
       &--selected {
-        background-color: #e6f7ff;
+        background-color: var(--primary-1, #fff3e6);
       }
 
     }

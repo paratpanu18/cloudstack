@@ -337,7 +337,7 @@ export default {
 
       &--rule {
         padding-left: 60px;
-        background-color: rgba(#e6f7ff, 0.7);
+        background-color: var(--primary-1, #fff3e6);
 
         @media (min-width: 760px) {
           padding-left: 0;

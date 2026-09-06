@@ -20,7 +20,7 @@
     <p v-html="getMessage()"></p>
 
     <div v-if="loading" class="loading">
-      <loading-outlined style="color: #1890ff;" />
+      <loading-outlined :style="{ color: $config.theme['@primary-color'] }" />
     </div>
 
     <a-alert v-if="fixedOfferingKvm" type="error" show-icon>

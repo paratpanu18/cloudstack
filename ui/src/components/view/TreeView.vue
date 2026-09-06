@@ -607,7 +607,7 @@ export default {
     }
     span.ant-tree-node-content-wrapper.ant-tree-node-selected > span {
       color: rgba(0, 0, 0, 0.65);
-      background-color: #bae7ff;
+      background-color: var(--primary-2, #ffe3c7);
     }
     span.ant-tree-node-content-wrapper::before {
       background: #ffffff;

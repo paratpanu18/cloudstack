@@ -43,7 +43,7 @@
     <a-card :bordered="false" style="background:#f1f1f1">
       <div><check-circle-outlined style="color: #52c41a; margin-right: 8px"/> {{ $t('label.success') + ': ' + succeededCount }}</div>
       <div><close-circle-outlined style="color: #f5222d; margin-right: 8px"/> {{ $t('state.failed') + ': ' + failedCount }}</div>
-      <div><sync-outlined style="color: #1890ff; margin-right: 8px"/> {{ $t('state.inprogress') + ': ' + selectedItems.filter(item => item.status === 'InProgress').length || 0 }}</div>
+      <div><sync-outlined :style="{ color: $config.theme['@primary-color'], marginRight: '8px' }"/> {{ $t('state.inprogress') + ': ' + selectedItems.filter(item => item.status === 'InProgress').length || 0 }}</div>
     </a-card>
     <a-divider />
     <div v-if="showGroupActionModal">

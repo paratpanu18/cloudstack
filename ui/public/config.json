@@ -31,11 +31,11 @@
     "@project-nav-background-color": "#001529",
     "@project-nav-text-color": "rgba(255, 255, 255, 0.65)",
     "@navigation-text-color": "rgba(0, 0, 0, 0.65)",
-    "@primary-color": "#1890ff",
-    "@link-color": "#1890ff",
-    "@link-hover-color": "#40a9ff",
-    "@loading-color": "#1890ff",
-    "@processing-color": "#1890ff",
+    "@primary-color": "#f6871f",
+    "@link-color": "#f6871f",
+    "@link-hover-color": "#fb9a3d",
+    "@loading-color": "#f6871f",
+    "@processing-color": "#f6871f",
     "@success-color": "#52c41a",
     "@warning-color": "#faad14",
     "@error-color": "#f5222d",
@@ -71,15 +71,9 @@
     "links": [
       {
         "title": "Documentation",
-        "text": "NaCl CloudStack Documentation",
-        "link": "https://docs.cs.ce-nacl.com",
+        "text": "CE Cloud Platform - Documentation",
+        "link": "https://docs.cloud.ce.kmitl.ac.th",
         "icon": "read-outlined"
-      },
-      {
-        "title": "Email Support",
-        "text": "Feel free to reach out to our support team if you have any questions.",
-        "link": "mailto:nacl@kmitl.ac.th",
-        "icon": "mail-outlined"
       }
     ]
   },
@@ -96,12 +90,12 @@
   "notifyLatestCSVersion": true,
   "showSearchFilters": true,
   "announcementBanner": {
-    "enabled": true,
+    "enabled": false,
     "showIcon": false,
     "closable": false,
     "persistDismissal": true,
     "type": "warning",
-    "message": "🫃 <strong>Warning</strong>: This platform is currently in development. Your instances may be unstable and can be lost at any time.",
+    "message": "",
     "startDate": "2025-06-01T00:00:00Z",
     "endDate": "2030-07-16T00:00:00Z"
   }

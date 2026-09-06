@@ -17,6 +17,27 @@
 
 import { vueProps } from '@/vue-app'
 import { getAPI } from '@/api'
+import { generate } from '@ant-design/colors'
+
+export function applyCssVariables (theme) {
+  const primary = theme?.['@primary-color']
+  if (!primary) {
+    return
+  }
+  const root = document.documentElement
+  root.style.setProperty('--primary-color', primary)
+  if (theme['@link-hover-color']) {
+    root.style.setProperty('--primary-hover-color', theme['@link-hover-color'])
+  }
+  try {
+    const palette = generate(primary)
+    root.style.setProperty('--primary-1', palette[0])
+    root.style.setProperty('--primary-2', palette[1])
+    root.style.setProperty('--primary-3', palette[2])
+  } catch (error) {
+    console.error('Error generating theme palette:', error)
+  }
+}
 
 export async function applyCustomGuiTheme (accountid, domainid) {
   await fetch('config.json').then(response => response.json()).then(config => {

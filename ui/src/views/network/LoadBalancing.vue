@@ -2377,7 +2377,7 @@ export default {
     justify-content: center;
     background-color: rgba(0,0,0,0.5);
     z-index: 1;
-    color: #1890ff;
+    color: var(--primary-color, #f6871f);
     font-size: 2rem;
   }
 

@@ -26,6 +26,7 @@
 <script>
 import enUS from 'ant-design-vue/lib/locale-provider/en_US'
 import { AppDeviceEnquire } from '@/utils/mixin'
+import { applyCssVariables } from '@/utils/guiTheme'
 
 export default {
   mixins: [AppDeviceEnquire],
@@ -37,6 +38,7 @@ export default {
   },
   created () {
     window.less.modifyVars(this.$config.theme)
+    applyCssVariables(this.$config.theme)
     console.log('config and theme applied')
   }
 }

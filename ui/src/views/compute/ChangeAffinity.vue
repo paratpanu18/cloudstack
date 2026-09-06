@@ -21,7 +21,7 @@
     <p v-html="$t('message.select.affinity.groups')" />
 
     <div v-if="loading" class="loading">
-      <loading-outlined style="color: #1890ff;" />
+      <loading-outlined :style="{ color: $config.theme['@primary-color'] }" />
     </div>
 
     <div class="form__item">

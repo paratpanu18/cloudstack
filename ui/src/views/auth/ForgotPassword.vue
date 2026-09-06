@@ -222,7 +222,7 @@ export default {
       transition: color 0.3s;
 
       &:hover {
-        color: #1890ff;
+        color: var(--primary-color, #f6871f);
       }
     }
 

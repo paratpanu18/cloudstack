@@ -19,7 +19,7 @@
   <div class="form" v-ctrl-enter="submitData">
 
     <div v-if="loading" class="loading">
-      <loading-outlined style="color: #1890ff;" />
+      <loading-outlined :style="{ color: $config.theme['@primary-color'] }" />
     </div>
 
     <a-alert type="info" style="margin-bottom: 20px">

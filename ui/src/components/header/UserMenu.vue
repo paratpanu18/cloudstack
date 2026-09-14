@@ -18,11 +18,11 @@
 <template>
   <div class="user-menu">
     <span class="vpn-menu">
-      <a-button type="default" class="vpn-button" href="https://vpn.ce-nacl.com" target="_blank">
+      <a-button type="default" class="vpn-button" href="https://public-storage.ce-nacl.com/cloud/NaCl%20OpenVPN.ovpn" target="_blank">
         <DownloadOutlined />
         <span class="vpn-label">VPN Profile</span>
       </a-button>
-      <a-button type="text" size="small" class="vpn-info-button" href="#">
+      <a-button type="text" size="small" class="vpn-info-button" href="https://docs.cloud.ce-nacl.com/vpn-setup/" target="_blank">
       <a-tooltip title="To enable all functionalities, VPN connection is required. Click here for setup instructions.">
         <InfoCircleOutlined :style="{ fontSize: '14px' }" />
       </a-tooltip>

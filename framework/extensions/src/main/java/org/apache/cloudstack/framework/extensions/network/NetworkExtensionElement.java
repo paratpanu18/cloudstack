@@ -21,6 +21,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -459,12 +460,18 @@ public class NetworkExtensionElement extends AdapterBase implements
             addNicToPayload(payload, nic);
             if (vm != null) {
                 payload.addProperty("hostname", safeStr(vm.getHostName()));
+                addVmToPayload(payload, vm);
             }
             addExtensionIpToPayload(payload, network);
 
             logger.debug("Preparing NIC via extension script: network={} nicMac={} nicIp={}", network, nic.getMacAddress(), nic.getIPv4Address());
 
-            return executeScript(network, CMD_PREPARE_NIC, payload);
+            Pair<Integer, String> result = executeScriptAndReturnOutput(network, CMD_PREPARE_NIC, payload);
+            if (result.first() != EXIT_CODE_SUCCESS) {
+                return false;
+            }
+            applyVmDetailFromScriptOutput(vm, result.second());
+            return true;
         } catch (Exception e) {
             logger.warn("prepare: failed to prepare NIC for network {}: {}", network, e.getMessage());
             return false;
@@ -497,11 +504,19 @@ public class NetworkExtensionElement extends AdapterBase implements
             JsonObject payload = new JsonObject();
             addNetworkToPayload(payload, network);
             addNicToPayload(payload, nic);
+            if (vm != null) {
+                addVmToPayload(payload, vm);
+            }
             addExtensionIpToPayload(payload, network);
 
             logger.debug("Releasing NIC via extension script: network={} nicMac={} nicIp={}", network, nic != null ? nic.getMacAddress() : null, nic != null ? nic.getIPv4Address() : null);
 
-            return executeScript(network, CMD_RELEASE_NIC, payload);
+            Pair<Integer, String> result = executeScriptAndReturnOutput(network, CMD_RELEASE_NIC, payload);
+            if (result.first() != EXIT_CODE_SUCCESS) {
+                return false;
+            }
+            applyVmDetailFromScriptOutput(vm, result.second());
+            return true;
         } catch (Exception e) {
             logger.warn("release: failed to release NIC for network {}: {}", network, e.getMessage());
             return false;
@@ -1048,6 +1063,83 @@ public class NetworkExtensionElement extends AdapterBase implements
      * Covers: nic_id, nic_uuid, mac, ip, gateway (IPv4), netmask, default_nic,
      * device_id, and the three IPv6 NIC fields.
      */
+    /**
+     * Adds VM identity and a filtered view of the VM details (keys starting
+     * with "kvm.") to the payload so the extension script can honour
+     * hypervisor-specific requests (e.g. PCI passthrough bus addresses).
+     */
+    private void addVmToPayload(JsonObject payload, VirtualMachineProfile vm) {
+        if (payload == null || vm == null) {
+            return;
+        }
+        com.cloud.vm.VirtualMachine machine = vm.getVirtualMachine();
+        if (machine == null) {
+            return;
+        }
+        payload.addProperty("vm_uuid", safeStr(machine.getUuid()));
+        payload.addProperty("instance_name", safeStr(machine.getInstanceName()));
+        Map<String, String> vmDetails = machine.getDetails();
+        if (MapUtils.isNotEmpty(vmDetails)) {
+            JsonObject filtered = new JsonObject();
+            for (Map.Entry<String, String> entry : vmDetails.entrySet()) {
+                if (StringUtils.isNotBlank(entry.getKey()) && entry.getKey().startsWith("kvm.")) {
+                    filtered.addProperty(entry.getKey(), safeStr(entry.getValue()));
+                }
+            }
+            if (filtered.size() > 0) {
+                payload.add("vm_details", filtered);
+            }
+        }
+    }
+
+    /**
+     * Applies VM-scoped keys from the script output to the VM details:
+     * "vm.pci.bus.addresses" merges a PCI bus address into the
+     * {@link VmDetailConstants#KVM_PCI_BUS_ADDRESSES} detail (comma-separated),
+     * "vm.pci.bus.addresses.remove" strips an address from it.
+     */
+    private void applyVmDetailFromScriptOutput(VirtualMachineProfile vm, String outputStr) {
+        if (vm == null || outputStr == null) {
+            return;
+        }
+        try {
+            JsonObject outputJson = parseJsonOutput(outputStr);
+            if (outputJson == null) {
+                return;
+            }
+            String added = getJsonString(outputJson, "vm.pci.bus.addresses");
+            String removed = getJsonString(outputJson, "vm.pci.bus.addresses.remove");
+            if (StringUtils.isBlank(added) && StringUtils.isBlank(removed)) {
+                return;
+            }
+            long vmId = vm.getVirtualMachine() != null ? vm.getVirtualMachine().getId() : vm.getId();
+            Map<String, String> details = vmInstanceDetailsDao.listDetailsKeyPairs(vmId);
+            String existing = details != null ? details.get(VmDetailConstants.KVM_PCI_BUS_ADDRESSES) : null;
+            Set<String> addresses = new LinkedHashSet<>();
+            if (StringUtils.isNotBlank(existing)) {
+                for (String address : existing.split(",")) {
+                    if (StringUtils.isNotBlank(address)) {
+                        addresses.add(address.trim());
+                    }
+                }
+            }
+            if (StringUtils.isNotBlank(removed)) {
+                addresses.remove(removed.trim());
+            }
+            if (StringUtils.isNotBlank(added)) {
+                addresses.add(added.trim());
+            }
+            if (addresses.isEmpty()) {
+                vmInstanceDetailsDao.removeDetail(vmId, VmDetailConstants.KVM_PCI_BUS_ADDRESSES);
+                return;
+            }
+            String merged = String.join(",", addresses);
+            vmInstanceDetailsDao.addDetail(vmId, VmDetailConstants.KVM_PCI_BUS_ADDRESSES, merged, false);
+        } catch (Exception e) {
+            logger.warn("Failed to apply VM details from script output: {}", e.getMessage());
+        }
+    }
+
     private void addNicToPayload(JsonObject payload, NicProfile nic) {
         if (payload == null || nic == null) {
             return;

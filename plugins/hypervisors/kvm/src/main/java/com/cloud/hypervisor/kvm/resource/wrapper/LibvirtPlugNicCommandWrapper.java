@@ -60,6 +60,12 @@ public final class LibvirtPlugNicCommandWrapper extends CommandWrapper<PlugNicCo
                 }
                 nicnum++;
             }
+            if (nic.getBroadcastType() == com.cloud.network.Networks.BroadcastDomainType.Dpu) {
+                // DPU-offloaded network: guest connectivity comes from the PCI-passthrough
+                // VF hostdev; no host bridge or tap interface is provisioned.
+                logger.debug("Skipping nic plug for DPU-offloaded nic (mac " + nic.getMac() + ")");
+                return new PlugNicAnswer(command, true, "success");
+            }
             final VifDriver vifDriver = libvirtComputingResource.getVifDriver(nic.getType(), nic.getName());
             final InterfaceDef interfaceDef = vifDriver.plug(nic, "Other PV", "", null);
             if (command.getDetails() != null) {

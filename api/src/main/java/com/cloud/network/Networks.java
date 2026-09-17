@@ -135,7 +135,10 @@ public class Networks {
         OpenDaylight("opendaylight", String.class),
         TUNGSTEN("tf", String.class),
         NSX("nsx", String.class),
-        Netris("netris", String.class);
+        Netris("netris", String.class),
+        // DPU-offloaded isolation: the guest interface is a DPU vSwitch member
+        // (PCI-passthrough VF); no host bridge or VLAN is used.
+        Dpu("dpu", String.class);
 
         private final String scheme;
         private final Class<?> type;

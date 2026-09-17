@@ -4096,6 +4096,12 @@ public class LibvirtComputingResource extends ServerResourceBase implements Serv
             LOGGER.error("LibvirtVMDef object get devices with null result");
             throw new InternalErrorException("LibvirtVMDef object get devices with null result");
         }
+        if (nic.getBroadcastType() == BroadcastDomainType.Dpu) {
+            // DPU-offloaded network: guest connectivity comes from the PCI-passthrough
+            // VF hostdev; no host bridge or tap interface is provisioned.
+            LOGGER.info(String.format("Skipping vif creation for DPU-offloaded nic (device %s, mac %s, uri %s)", nic.getDeviceId(), nic.getMac(), nic.getBroadcastUri()));
+            return;
+        }
         final InterfaceDef interfaceDef = getVifDriver(nic.getType(), nic.getName()).plug(nic, vm.getPlatformEmulator(), nicAdapter, extraConfig);
         if (vmSpec.getDetails() != null) {
             setInterfaceDefQueueSettings(vmSpec.getDetails(), vmSpec.getCpus(), interfaceDef);

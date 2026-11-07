@@ -74,3 +74,8 @@ CALL `cloud`.`IDEMPOTENT_ADD_COLUMN`('cloud.oauth_provider','token_url', 'VARCHA
 
 -- Custom logo (data URI) shown on the OAuth login button
 CALL `cloud`.`IDEMPOTENT_ADD_COLUMN`('cloud.oauth_provider','logo', 'MEDIUMTEXT NULL COMMENT ''Custom logo (data URI) for the OAuth login button'' ');
+
+-- Reverse proxy targets on isolated networks. Null fields preserve shared network mappings.
+CALL `cloud`.`IDEMPOTENT_ADD_COLUMN`('cloud.reverse_proxy_host', 'public_ip_id', 'BIGINT UNSIGNED DEFAULT NULL');
+CALL `cloud`.`IDEMPOTENT_ADD_COLUMN`('cloud.reverse_proxy_host', 'public_port', 'INT UNSIGNED DEFAULT NULL');
+CALL `cloud`.`IDEMPOTENT_ADD_COLUMN`('cloud.reverse_proxy_host', 'port_forwarding_rule_id', 'BIGINT UNSIGNED DEFAULT NULL');

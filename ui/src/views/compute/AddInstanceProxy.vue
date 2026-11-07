@@ -43,6 +43,32 @@
     </div>
 
     <div class="form__item">
+      <p class="form__label">{{ $t('label.network') }}</p>
+      <a-select
+        v-model:value="networkId"
+        :options="networkOptions"
+        :loading="loadingNetworks"
+        style="width: 100%"
+        @change="fetchPublicIps" />
+    </div>
+
+    <template v-if="isIsolated">
+      <a-alert type="info" :message="$t('message.proxy.port.forwarding')" style="margin-bottom: 15px" />
+      <div class="form__item">
+        <p class="form__label">{{ $t('label.public.ip') }}</p>
+        <a-select v-model:value="publicIpId" :options="publicIpOptions" :loading="loadingPublicIps" style="width: 100%" />
+        <div v-if="!loadingPublicIps && publicIpOptions.length === 0" class="form__hint">
+          {{ $t('message.proxy.public.ip.required') }}
+        </div>
+      </div>
+      <div class="form__item">
+        <p class="form__label">{{ $t('label.publicport') }}</p>
+        <a-input-number v-model:value="publicPort" :min="1" :max="65535" style="width: 100%" />
+      </div>
+    </template>
+
+    <a-alert v-if="!allowCustomName" type="info" :message="$t('message.proxy.random.only')" style="margin-bottom: 15px" />
+    <div v-else class="form__item">
       <p class="form__label">{{ $t('label.proxy.name') }}</p>
       <a-input
         v-model:value="name"
@@ -89,7 +115,7 @@
       <a-button @click="closeAction">
         {{ $t('label.cancel') }}
       </a-button>
-      <a-button type="primary" @click="submitData" ref="submit" :disabled="checkingName || (nameChecked && !nameAvailable) || !proxyDomainId">
+      <a-button type="primary" @click="submitData" ref="submit" :disabled="loading || loadingDomains || loadingNetworks || loadingPublicIps || checkingName || (allowCustomName && nameChecked && !nameAvailable) || !proxyDomainId || !networkId || (isIsolated && !publicIpId)">
         {{ $t('label.ok') }}
       </a-button>
     </div>
@@ -99,6 +125,7 @@
 
 <script>
 import { getAPI, postAPI } from '@/api'
+import { waitForProxyJob } from '@/utils/reverseproxy'
 
 const RANDOM_ADJECTIVES = ['swift', 'bright', 'calm', 'brave', 'clever', 'eager', 'gentle', 'happy',
   'jolly', 'kind', 'lively', 'mellow', 'noble', 'quiet', 'rapid', 'sunny', 'tidy', 'vivid', 'wise', 'bold']
@@ -116,6 +143,16 @@ export default {
   inject: ['parentFetchData'],
   data () {
     return {
+      nics: [],
+      networkId: undefined,
+      defaultNetworkId: undefined,
+      loadingNetworks: false,
+      publicIpId: undefined,
+      publicPort: 80,
+      publicIpOptions: [],
+      loadingPublicIps: false,
+      publicIpRequest: 0,
+      nameCheckRequest: 0,
       name: '',
       protocol: 'http',
       port: 80,
@@ -133,6 +170,15 @@ export default {
     }
   },
   computed: {
+    allowCustomName () {
+      return this.proxyDomains.find(domain => domain.id === this.proxyDomainId)?.allowcustomname === true
+    },
+    networkOptions () {
+      return this.nics.map(nic => ({ label: `${nic.networkname || nic.networkid} (${nic.type})`, value: nic.networkid }))
+    },
+    isIsolated () {
+      return this.nics.find(nic => nic.networkid === this.networkId)?.type === 'Isolated'
+    },
     proxyDomainOptions () {
       return this.proxyDomains.map(domain => {
         return { label: domain.domain, value: domain.id }
@@ -140,6 +186,7 @@ export default {
     }
   },
   mounted () {
+    this.fetchNetworks()
     this.fetchProxyDomains()
   },
   activated () {
@@ -151,6 +198,7 @@ export default {
     // The action modal keeps this component alive (keep-alive), reset the form
     // so that a stale name or availability check is not shown when reopened
     this.resetForm()
+    this.fetchNetworks()
     this.fetchProxyDomains()
   },
   beforeUnmount () {
@@ -164,6 +212,13 @@ export default {
         clearTimeout(this.checkTimer)
       }
       this.checkTimer = null
+      this.publicIpRequest++
+      this.nameCheckRequest++
+      this.networkId = undefined
+      this.defaultNetworkId = undefined
+      this.publicIpId = undefined
+      this.publicPort = 80
+      this.publicIpOptions = []
       this.name = ''
       this.protocol = 'http'
       this.port = 80
@@ -172,6 +227,49 @@ export default {
       this.nameAvailable = false
       this.nameCheckMessage = ''
       this.loading = false
+    },
+    fetchNetworks () {
+      this.loadingNetworks = true
+      return getAPI('listNics', { virtualmachineid: this.resource.id }).then(response => {
+        this.nics = (response.listnicsresponse.nic || []).filter(nic => ['Shared', 'Isolated'].includes(nic.type) && nic.ipaddress)
+        this.selectDefaultNetwork()
+      }).catch(error => this.$notifyError(error)).finally(() => { this.loadingNetworks = false })
+    },
+    selectDefaultNetwork () {
+      if (!this.networkId && this.defaultNetworkId && this.nics.some(nic => nic.networkid === this.defaultNetworkId)) {
+        this.networkId = this.defaultNetworkId
+        this.fetchPublicIps()
+      }
+    },
+    async fetchPublicIps () {
+      const request = ++this.publicIpRequest
+      const networkId = this.networkId
+      this.publicIpId = undefined
+      this.publicIpOptions = []
+      this.loadingPublicIps = false
+      if (!this.isIsolated) return
+      this.loadingPublicIps = true
+      try {
+        const networkResponse = await getAPI('listNetworks', { id: networkId })
+        const network = networkResponse.listnetworksresponse.network?.[0]
+        if (!network) throw new Error(this.$t('message.proxy.public.ip.required'))
+        const params = { allocatedonly: true, isstaticnat: false, listall: true }
+        if (network.vpcid) params.vpcid = network.vpcid
+        else params.associatednetworkid = networkId
+        if (this.resource.projectid) params.projectid = this.resource.projectid
+        const response = await getAPI('listPublicIpAddresses', params)
+        if (request !== this.publicIpRequest) return
+        this.publicIpOptions = (response.listpublicipaddressesresponse.publicipaddress || [])
+          .filter(ip => ip.state === 'Allocated' && !ip.isstaticnat && (!network.vpcid || !ip.issourcenat) &&
+            (!ip.associatednetworkid || ip.associatednetworkid === networkId) &&
+            (this.resource.projectid ? ip.projectid === this.resource.projectid : ip.account === this.resource.account && ip.domainid === this.resource.domainid))
+          .map(ip => ({ label: ip.ipaddress, value: ip.id }))
+        this.publicIpId = this.publicIpOptions[0]?.value
+      } catch (error) {
+        if (request === this.publicIpRequest) this.$notifyError(error)
+      } finally {
+        if (request === this.publicIpRequest) this.loadingPublicIps = false
+      }
     },
     fetchProxyDomains () {
       if (!('listReverseProxyDomains' in this.$store.getters.apis)) {
@@ -185,6 +283,8 @@ export default {
         if (this.proxyDomains.length > 0) {
           this.proxyDomainId = this.proxyDomains[0].id
           this.proxyDomain = this.proxyDomains[0].domain
+          this.defaultNetworkId = this.proxyDomains[0].defaultnetworkid
+          this.selectDefaultNetwork()
         } else {
           this.proxyDomainId = undefined
           this.proxyDomain = ''
@@ -194,12 +294,16 @@ export default {
       })
     },
     handleDomainChange () {
+      if (this.checkTimer) clearTimeout(this.checkTimer)
+      this.checkingName = false
       const selected = this.proxyDomains.find(domain => domain.id === this.proxyDomainId)
       this.proxyDomain = selected ? selected.domain : ''
+      this.nameCheckRequest++
+      if (!this.allowCustomName) this.name = ''
       this.nameChecked = false
       this.nameAvailable = false
       this.nameCheckMessage = ''
-      if (this.name && this.name.trim()) {
+      if (this.allowCustomName && this.name && this.name.trim()) {
         this.handleNameInput()
       }
     },
@@ -209,13 +313,15 @@ export default {
       this.handleNameInput()
     },
     handleNameInput () {
+      this.nameCheckRequest++
+      this.checkingName = false
       this.nameChecked = false
       this.nameAvailable = false
       this.nameCheckMessage = ''
       if (this.checkTimer) {
         clearTimeout(this.checkTimer)
       }
-      if (!this.name || !this.name.trim()) {
+      if (!this.allowCustomName || !this.name || !this.name.trim()) {
         return
       }
       if (!('checkInstanceProxyName' in this.$store.getters.apis)) {
@@ -226,27 +332,33 @@ export default {
       }, 600)
     },
     checkName () {
+      if (!this.allowCustomName) return
+      const request = ++this.nameCheckRequest
       this.checkingName = true
       postAPI('checkInstanceProxyName', {
         name: this.name.trim(),
+        virtualmachineid: this.resource.id,
         domainid: this.proxyDomainId
       }).then(response => {
+        if (request !== this.nameCheckRequest) return
         const result = response.checkinstanceproxynameresponse?.instanceproxyname || {}
         this.nameChecked = true
         this.nameAvailable = !!result.available
         this.nameCheckMessage = result.message || ''
       }).catch(error => {
+        if (request !== this.nameCheckRequest) return
         this.nameChecked = false
         this.$notifyError(error)
       }).finally(() => {
-        this.checkingName = false
+        if (request === this.nameCheckRequest) this.checkingName = false
       })
     },
     closeAction () {
       this.$emit('close-action')
     },
     submitData () {
-      if (this.loading) return
+      if (this.loading || this.loadingDomains || this.loadingNetworks || this.loadingPublicIps || this.checkingName ||
+        (this.allowCustomName && this.nameChecked && !this.nameAvailable)) return
       if (!this.proxyDomainId) {
         this.$notification.error({
           message: this.$t('label.proxy.domain'),
@@ -254,11 +366,8 @@ export default {
         })
         return
       }
-      if (!this.name || !this.name.trim()) {
-        this.$notification.error({
-          message: this.$t('label.proxy.name'),
-          description: this.$t('message.proxy.name.required')
-        })
+      if (!this.networkId || (this.isIsolated && (!this.publicIpId || !this.publicPort || this.publicPort < 1 || this.publicPort > 65535))) {
+        this.$notification.error({ message: this.$t('label.reverseproxy'), description: this.$t('message.proxy.public.ip.required') })
         return
       }
       if (!this.port || this.port < 1 || this.port > 65535) {
@@ -271,11 +380,13 @@ export default {
       this.loading = true
       postAPI('addInstanceProxy', {
         virtualmachineid: this.resource.id,
-        name: this.name.trim(),
+        ...(this.allowCustomName && this.name.trim() ? { name: this.name.trim() } : {}),
         domainid: this.proxyDomainId,
+        networkid: this.networkId,
+        ...(this.isIsolated ? { ipaddressid: this.publicIpId, publicport: this.publicPort } : {}),
         protocol: this.protocol,
         port: this.port
-      }).then(response => {
+      }).then(response => waitForProxyJob(this, response, 'addinstanceproxyresponse')).then(() => {
         this.$notification.success({
           message: this.$t('label.reverseproxy'),
           description: this.$t('message.success.add.instance.proxy')

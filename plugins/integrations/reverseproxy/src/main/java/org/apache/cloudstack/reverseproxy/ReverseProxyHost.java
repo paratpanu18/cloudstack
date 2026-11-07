@@ -23,7 +23,7 @@ import org.apache.cloudstack.api.InternalIdentity;
 
 public interface ReverseProxyHost extends ControlledEntity, Identity, InternalIdentity {
     enum State {
-        Active, Error;
+        Creating, Active, Error;
     }
 
     String getFqdn();
@@ -41,6 +41,12 @@ public interface ReverseProxyHost extends ControlledEntity, Identity, InternalId
     long getNpmProxyHostId();
 
     Long getReverseProxyDomainId();
+
+    Long getPublicIpId();
+
+    Integer getPublicPort();
+
+    Long getPortForwardingRuleId();
 
     State getState();
 

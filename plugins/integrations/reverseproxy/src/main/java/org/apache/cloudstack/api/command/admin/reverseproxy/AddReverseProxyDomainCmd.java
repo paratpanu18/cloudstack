@@ -64,7 +64,7 @@ public class AddReverseProxyDomainCmd extends BaseCmd {
 
     @Parameter(name = ApiConstants.IS_PUBLIC, type = CommandType.BOOLEAN, required = false,
             description = "When true, the domain suffix can be used by all accounts (default false, only granted accounts "
-                    + "and shared networks can use it)")
+                    + "and shared or isolated networks can use it)")
     private Boolean isPublic;
 
     @Parameter(name = "npmcertificateid", type = CommandType.LONG, required = false,
@@ -79,7 +79,7 @@ public class AddReverseProxyDomainCmd extends BaseCmd {
 
     @Parameter(name = ApiConstants.NETWORK_IDS, type = CommandType.LIST, collectionType = CommandType.UUID,
             entityType = NetworkResponse.class, required = false,
-            description = "The list of shared networks granted access to the domain suffix")
+            description = "The list of shared or isolated networks granted access to the domain suffix")
     private List<Long> networkIds;
 
     /////////////////////////////////////////////////////

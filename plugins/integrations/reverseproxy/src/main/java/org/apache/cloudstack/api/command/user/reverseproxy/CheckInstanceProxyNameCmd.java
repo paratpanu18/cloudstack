@@ -27,6 +27,7 @@ import org.apache.cloudstack.api.Parameter;
 import org.apache.cloudstack.api.ServerApiException;
 import org.apache.cloudstack.api.response.CheckInstanceProxyNameResponse;
 import org.apache.cloudstack.api.response.ReverseProxyDomainResponse;
+import org.apache.cloudstack.api.response.UserVmResponse;
 import org.apache.cloudstack.reverseproxy.ReverseProxyService;
 
 import com.cloud.user.Account;
@@ -54,6 +55,14 @@ public class CheckInstanceProxyNameCmd extends BaseCmd {
     @Parameter(name = ApiConstants.DOMAIN_ID, type = CommandType.UUID, entityType = ReverseProxyDomainResponse.class, required = false,
             description = "The ID of the reverse proxy domain suffix to check the name on")
     private Long domainId;
+
+    @Parameter(name = ApiConstants.VIRTUAL_MACHINE_ID, type = CommandType.UUID, entityType = UserVmResponse.class,
+            description = "The instance to expose, used to validate network grants")
+    private Long virtualMachineId;
+
+    public Long getVirtualMachineId() {
+        return virtualMachineId;
+    }
 
     /////////////////////////////////////////////////////
     /////////////////// Accessors ///////////////////////

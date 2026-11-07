@@ -46,7 +46,7 @@ public class ReverseProxyDomainResponse extends BaseResponse {
 
     @SerializedName(ApiConstants.IS_PUBLIC)
     @Param(description = "true if the domain suffix can be used by all accounts, false if only granted accounts and "
-            + "shared networks can use it")
+            + "shared or isolated networks can use it")
     private Boolean isPublic;
 
     @SerializedName("npmcertificateid")
@@ -62,11 +62,11 @@ public class ReverseProxyDomainResponse extends BaseResponse {
     private List<String> accountIds;
 
     @SerializedName("networks")
-    @Param(description = "the list of shared networks granted access to the domain suffix", since = "4.22.2.0")
+    @Param(description = "the list of shared or isolated networks granted access to the domain suffix", since = "4.22.2.0")
     private List<String> networks;
 
     @SerializedName("networkids")
-    @Param(description = "the list of shared network ids granted access to the domain suffix", since = "4.22.2.0")
+    @Param(description = "the list of shared or isolated network ids granted access to the domain suffix", since = "4.22.2.0")
     private List<String> networkIds;
 
     @SerializedName("proxycount")
@@ -76,6 +76,22 @@ public class ReverseProxyDomainResponse extends BaseResponse {
     @SerializedName(ApiConstants.CREATED)
     @Param(description = "the date the domain suffix was created")
     private Date created;
+
+    @SerializedName("allowcustomname")
+    @Param(description = "Whether callers may choose a proxy name; otherwise the server generates it")
+    private Boolean allowCustomName;
+
+    @SerializedName("defaultnetworkid")
+    @Param(description = "The default network selected for exposure when an instance is supplied")
+    private String defaultNetworkId;
+
+    public void setAllowCustomName(Boolean allowCustomName) {
+        this.allowCustomName = allowCustomName;
+    }
+
+    public void setDefaultNetworkId(String defaultNetworkId) {
+        this.defaultNetworkId = defaultNetworkId;
+    }
 
     public String getId() {
         return id;

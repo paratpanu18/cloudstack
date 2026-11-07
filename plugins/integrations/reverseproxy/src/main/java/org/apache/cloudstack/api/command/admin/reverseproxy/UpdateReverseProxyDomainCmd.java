@@ -79,7 +79,7 @@ public class UpdateReverseProxyDomainCmd extends BaseCmd {
 
     @Parameter(name = ApiConstants.NETWORK_IDS, type = CommandType.LIST, collectionType = CommandType.UUID,
             entityType = NetworkResponse.class, required = false,
-            description = "The list of shared networks granted access to the domain suffix, replaces the current grants")
+            description = "The list of shared or isolated networks granted access to the domain suffix, replaces the current grants")
     private List<Long> networkIds;
 
     /////////////////////////////////////////////////////

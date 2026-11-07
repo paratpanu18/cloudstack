@@ -23,7 +23,8 @@ import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.api.ApiErrorCode;
-import org.apache.cloudstack.api.BaseCmd;
+import org.apache.cloudstack.api.BaseAsyncCmd;
+import com.cloud.event.EventTypes;
 import org.apache.cloudstack.api.Parameter;
 import org.apache.cloudstack.api.ServerApiException;
 import org.apache.cloudstack.api.response.ReverseProxyDomainResponse;
@@ -34,17 +35,26 @@ import com.cloud.utils.exception.CloudRuntimeException;
 import com.cloud.user.Account;
 
 @APICommand(name = "deleteReverseProxyDomain",
-        description = "Deletes a reverse proxy domain suffix. The domain suffix can only be deleted when no proxy hosts "
-                + "exist on it anymore.",
+        description = "Deletes a reverse proxy domain suffix and cleans up its proxy hosts and integration-created forwarding rules.",
         responseObject = SuccessResponse.class,
         requestHasSensitiveInfo = false,
         responseHasSensitiveInfo = false,
         since = "4.22.2.0",
         authorized = {RoleType.Admin})
-public class DeleteReverseProxyDomainCmd extends BaseCmd {
+public class DeleteReverseProxyDomainCmd extends BaseAsyncCmd {
 
     @Inject
     public ReverseProxyService reverseProxyService;
+
+    @Override
+    public String getEventType() {
+        return EventTypes.EVENT_NET_RULE_DELETE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "Deleting reverse proxy domain " + id;
+    }
 
     /////////////////////////////////////////////////////
     //////////////// API parameters /////////////////////

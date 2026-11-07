@@ -132,14 +132,14 @@ export default {
         {
           field: 'backend',
           customTitle: 'label.proxy.backend',
-          backend: (record) => record.protocol && record.ipaddress ? record.protocol + '://' + record.ipaddress + ':' + record.port : ''
+          backend: (record) => record.protocol && record.ipaddress ? record.protocol + '://' + (record.publicipaddress || record.ipaddress) + ':' + (record.publicport || record.port) : ''
         },
         'account',
         'domain',
         'state',
         'created'
       ],
-      details: ['name', 'fqdn', 'url', 'virtualmachinename', 'ipaddress', 'protocol', 'port', 'state', 'account', 'domain', 'created'],
+      details: ['name', 'fqdn', 'url', 'virtualmachinename', 'ipaddress', 'protocol', 'port', 'publicipaddress', 'publicport', 'portforwardingruleid', 'state', 'account', 'domain', 'created'],
       searchFilters: ['keyword'],
       related: [{
         name: 'vm',

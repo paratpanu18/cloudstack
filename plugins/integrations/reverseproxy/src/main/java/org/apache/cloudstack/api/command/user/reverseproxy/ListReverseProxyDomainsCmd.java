@@ -57,7 +57,7 @@ public class ListReverseProxyDomainsCmd extends BaseCmd {
 
     @Parameter(name = ApiConstants.VIRTUAL_MACHINE_ID, type = CommandType.UUID, entityType = UserVmResponse.class,
             required = false, description = "The ID of the instance that will be exposed, when given the domain suffixes "
-                    + "granted to the shared networks of the instance are included as well")
+                    + "granted to the networks of the instance are included as well")
     private Long virtualMachineId;
 
     @Parameter(name = ApiConstants.KEYWORD, type = CommandType.STRING, required = false,

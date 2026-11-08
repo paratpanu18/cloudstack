@@ -22,14 +22,8 @@
       <loading-outlined :style="{ color: $config.theme['@primary-color'] }" />
     </div>
 
-    <a-alert type="info" style="margin-bottom: 20px">
-      <template #message>
-        <label v-html="$t('message.add.instance.proxy')"></label>
-      </template>
-    </a-alert>
-
     <div class="form__item">
-      <p class="form__label">{{ $t('label.proxy.domain') }}</p>
+      <p class="form__label">{{ $t('label.proxy.domain') }}<span class="form__required" :aria-label="$t('label.required')">*</span></p>
       <a-select
         v-model:value="proxyDomainId"
         :options="proxyDomainOptions"
@@ -41,31 +35,6 @@
         {{ $t('message.proxy.domain.none.available') }}
       </div>
     </div>
-
-    <div class="form__item">
-      <p class="form__label">{{ $t('label.network') }}</p>
-      <a-select
-        v-model:value="networkId"
-        :options="networkOptions"
-        :loading="loadingNetworks"
-        style="width: 100%"
-        @change="fetchPublicIps" />
-    </div>
-
-    <template v-if="isIsolated">
-      <a-alert type="info" :message="$t('message.proxy.port.forwarding')" style="margin-bottom: 15px" />
-      <div class="form__item">
-        <p class="form__label">{{ $t('label.public.ip') }}</p>
-        <a-select v-model:value="publicIpId" :options="publicIpOptions" :loading="loadingPublicIps" style="width: 100%" />
-        <div v-if="!loadingPublicIps && publicIpOptions.length === 0" class="form__hint">
-          {{ $t('message.proxy.public.ip.required') }}
-        </div>
-      </div>
-      <div class="form__item">
-        <p class="form__label">{{ $t('label.publicport') }}</p>
-        <a-input-number v-model:value="publicPort" :min="1" :max="65535" style="width: 100%" />
-      </div>
-    </template>
 
     <a-alert v-if="!allowCustomName" type="info" :message="$t('message.proxy.random.only')" style="margin-bottom: 15px" />
     <div v-else class="form__item">
@@ -94,21 +63,60 @@
       </a-alert>
     </div>
 
-    <div class="form__item">
-      <p class="form__label">{{ $t('label.proxy.protocol') }}</p>
-      <a-radio-group v-model:value="protocol">
-        <a-radio value="http">http</a-radio>
-        <a-radio value="https">https</a-radio>
-      </a-radio-group>
-    </div>
+    <a-divider class="proxy-section-divider" />
 
     <div class="form__item">
-      <p class="form__label">{{ $t('label.proxy.port') }}</p>
-      <a-input-number
-        v-model:value="port"
-        :min="1"
-        :max="65535"
-        style="width: 100%" />
+      <p class="form__label">{{ $t('label.network') }}<span class="form__required" :aria-label="$t('label.required')">*</span></p>
+      <a-select
+        v-model:value="networkId"
+        :options="networkOptions"
+        :loading="loadingNetworks"
+        style="width: 100%"
+        @change="fetchPublicIps" />
+    </div>
+
+    <div v-if="isIsolated" class="proxy-fields-row">
+      <div class="form__item">
+        <p class="form__label">
+          {{ $t('label.public.ip') }}
+          <span class="form__required" :aria-label="$t('label.required')">*</span>
+          <a-tooltip :title="$t('message.proxy.port.forwarding')">
+            <button type="button" class="proxy-help" :aria-label="$t('message.proxy.port.forwarding')">
+              <question-circle-outlined />
+            </button>
+          </a-tooltip>
+        </p>
+        <a-select v-model:value="publicIpId" :options="publicIpOptions" :loading="loadingPublicIps" style="width: 100%" />
+        <div v-if="!loadingPublicIps && publicIpOptions.length === 0" class="form__hint">
+          {{ $t('message.proxy.public.ip.required') }}
+        </div>
+      </div>
+      <div class="form__item">
+        <p class="form__label">{{ $t('label.publicport') }}<span class="form__required" :aria-label="$t('label.required')">*</span></p>
+        <a-input-number v-model:value="publicPort" :min="1" :max="65535" style="width: 100%" />
+      </div>
+    </div>
+
+    <a-divider class="proxy-section-divider" />
+
+    <div class="proxy-fields-row">
+      <div class="form__item">
+        <p class="form__label">{{ $t('label.proxy.protocol') }}<span class="form__required" :aria-label="$t('label.required')">*</span></p>
+        <a-radio-group v-model:value="protocol">
+          <a-radio value="http">http</a-radio>
+          <a-radio value="https">https</a-radio>
+        </a-radio-group>
+      </div>
+
+      <div class="form__item">
+        <p class="form__label">{{ $t('label.proxy.port') }}<span class="form__required" :aria-label="$t('label.required')">*</span></p>
+        <a-input-number
+          v-model:value="port"
+          :min="1"
+          :max="65535"
+          style="width: 100%" />
+      </div>
+
     </div>
 
     <div class="submit-btn">
@@ -423,6 +431,11 @@ export default {
       margin-bottom: 10px;
     }
 
+    &__required {
+      margin-left: 4px;
+      color: #ff4d4f;
+    }
+
     &__label {
       display: flex;
       font-weight: bold;
@@ -444,6 +457,32 @@ export default {
     padding: 0 4px;
     height: auto;
   }
+  }
+
+  .proxy-section-divider {
+    margin: 6px 0 14px;
+  }
+
+  .proxy-fields-row {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 16px;
+
+    @media (max-width: 480px) {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+  }
+
+  .proxy-help {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: help;
   }
 
   .submit-btn {

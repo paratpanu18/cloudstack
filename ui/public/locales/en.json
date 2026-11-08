@@ -4209,7 +4209,7 @@
   "label.publicipaddress": "Forwarding public IP",
   "label.portforwardingruleid": "Port forwarding rule ID",
   "message.proxy.random.only": "Your administrator requires random names. A name will be generated when you expose the instance.",
-  "message.proxy.port.forwarding": "A TCP port forwarding rule will be created from the selected public IP and port to your application's private port. Removing this exposure also removes its forwarding rule.",
+  "message.proxy.port.forwarding": "An active TCP forwarding rule to this instance and private port will be reused if it matches the selected public IP and port; otherwise a new rule will be created. Manually created rules are kept when you remove an exposure. Rules created by Expose are removed after their last exposure is removed.",
   "message.proxy.public.ip.required": "Select an allocated public IP and a valid public port for this network. Allocate a compatible public IP first if none are available.",
   "label.proxy.name": "Domain Prefix",
   "label.proxy.name.placeholder": "Optional, e.g. my-web; leave empty for a random name",

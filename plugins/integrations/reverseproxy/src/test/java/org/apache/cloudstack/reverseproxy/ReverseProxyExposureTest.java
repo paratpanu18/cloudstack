@@ -21,6 +21,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,6 +50,7 @@ import com.cloud.network.dao.IPAddressVO;
 import com.cloud.network.dao.NetworkDao;
 import com.cloud.network.dao.NetworkVO;
 import com.cloud.network.firewall.FirewallService;
+import com.cloud.network.rules.FirewallRule;
 import com.cloud.network.rules.PortForwardingRule;
 import com.cloud.network.rules.PortForwardingRuleVO;
 import com.cloud.network.rules.RulesService;
@@ -65,6 +67,7 @@ import com.cloud.vm.dao.UserVmDao;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -78,6 +81,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
 
 public class ReverseProxyExposureTest {
     private final NpmClient client = mock(NpmClient.class);
@@ -130,6 +134,9 @@ public class ReverseProxyExposureTest {
 
         @Override
         protected <T> T withDomainLock(Long domainId, Supplier<T> operation) { return operation.get(); }
+
+        @Override
+        protected <T> T withPublicIpLock(Long publicIpId, Supplier<T> operation) { return operation.get(); }
 
         @Override
         protected String generateProxyName() { return generated.isEmpty() ? super.generateProxyName() : generated.remove(); }
@@ -217,6 +224,176 @@ public class ReverseProxyExposureTest {
 
     private ReverseProxyHost expose(String name) {
         return manager.createInstanceProxy(10L, name, "http", 8080, 30L, 100L, 200L, 8443);
+    }
+
+    private PortForwardingRuleVO existingRule() {
+        PortForwardingRuleVO rule = forwarding.findById(500L);
+        when(rule.getState()).thenReturn(FirewallRule.State.Active);
+        when(rule.getProtocol()).thenReturn("tcp");
+        when(rule.getSourcePortStart()).thenReturn(8443);
+        when(rule.getSourcePortEnd()).thenReturn(8443);
+        when(rule.getDestinationPortStart()).thenReturn(8080);
+        when(rule.getDestinationPortEnd()).thenReturn(8080);
+        when(rule.getDestinationIpAddress()).thenReturn(new Ip("10.0.0.10"));
+        when(rule.getVirtualMachineId()).thenReturn(10L);
+        when(rule.getAccountId()).thenReturn(20L);
+        when(rule.getNetworkId()).thenReturn(100L);
+        when(forwarding.listByIpAndNotRevoked(200L)).thenReturn(List.of(rule));
+        return rule;
+    }
+
+    @Test
+    public void matchingManualForwardingIsReusedWithoutChangingNetworkRules() {
+        existingRule();
+        ReverseProxyHost proxy = expose("app");
+        assertEquals(Long.valueOf(500L), proxy.getPortForwardingRuleId());
+        assertFalse(proxy.isPortForwardingRuleManaged());
+        assertEquals(ReverseProxyHost.State.Active, proxy.getState());
+        verify(client).createProxyHost(any());
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void deletingAnExposurePreservesItsManualForwardingAndFirewall() {
+        existingRule();
+        expose("app");
+        manager.deleteInstanceProxy(1L);
+        verify(client).deleteProxyHost(99L);
+        verifyNoInteractions(rules, firewall);
+        assertNull(stored.get());
+    }
+
+    @Test
+    public void failedNpmCreationPreservesReusedManualForwarding() {
+        existingRule();
+        when(client.createProxyHost(any())).thenThrow(new CloudRuntimeException("NPM unavailable"));
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+        assertNull(stored.get());
+    }
+
+    @Test
+    public void failedOwnershipLookupCannotDeleteAManualRule() {
+        existingRule();
+        when(hosts.listByPortForwardingRuleId(500L)).thenThrow(new CloudRuntimeException("lookup failed"));
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+        assertNull(stored.get());
+    }
+
+    @Test
+    public void domainDeletionPreservesReusedManualForwarding() {
+        existingRule();
+        expose("app");
+        when(hosts.listByDomainId(30L)).thenReturn(List.of(stored.get()));
+        manager.deleteReverseProxyDomain(30L);
+        verifyNoInteractions(rules, firewall);
+        verify(domains).remove(30L);
+    }
+
+    @Test
+    public void matchingPortWithinAnExistingRangeIsReused() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getSourcePortStart()).thenReturn(8440);
+        when(rule.getSourcePortEnd()).thenReturn(8450);
+        when(rule.getDestinationPortStart()).thenReturn(8077);
+        when(rule.getDestinationPortEnd()).thenReturn(8087);
+        assertEquals(Long.valueOf(500L), expose("app").getPortForwardingRuleId());
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void conflictingDestinationPortIsRejectedWithoutChangingTheRule() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getDestinationPortStart()).thenReturn(8081);
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+        verify(client, never()).createProxyHost(any());
+    }
+
+    @Test
+    public void forwardingToAnotherInstanceIsNotReused() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getVirtualMachineId()).thenReturn(11L);
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void forwardingToAnotherNicIpIsNotReused() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getDestinationIpAddress()).thenReturn(new Ip("10.0.0.11"));
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void forwardingForAnotherNetworkIsNotReused() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getNetworkId()).thenReturn(101L);
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void forwardingForAnotherAccountIsNotReused() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getAccountId()).thenReturn(21L);
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void pendingForwardingIsNotReusedOrReapplied() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getState()).thenReturn(FirewallRule.State.Add);
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void existingUdpRuleDoesNotPreventCreatingTcpForwarding() throws Exception {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getProtocol()).thenReturn("udp");
+        assertTrue(expose("app").isPortForwardingRuleManaged());
+        verify(rules).createPortForwardingRule(any(), eq(10L), isNull(), eq(true), eq(true));
+    }
+
+    @Test
+    public void existingRuleOnAnotherPublicPortDoesNotPreventCreation() throws Exception {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getSourcePortStart()).thenReturn(8444);
+        when(rule.getSourcePortEnd()).thenReturn(8444);
+        assertTrue(expose("app").isPortForwardingRuleManaged());
+        verify(rules).createPortForwardingRule(any(), eq(10L), isNull(), eq(true), eq(true));
+    }
+
+    @Test
+    public void sharedManagedRuleIsRemovedOnlyAfterItsLastExposure() throws Exception {
+        Map<Long, ReverseProxyHostVO> mappings = new HashMap<>();
+        doAnswer(invocation -> {
+            ReverseProxyHostVO proxy = invocation.getArgument(0);
+            Field id = ReverseProxyHostVO.class.getDeclaredField("id");
+            id.setAccessible(true);
+            id.setLong(proxy, mappings.size() + 1L);
+            mappings.put(proxy.getId(), proxy);
+            return proxy;
+        }).when(hosts).persist(any());
+        when(hosts.findById(anyLong())).thenAnswer(invocation -> mappings.get(invocation.getArgument(0)));
+        when(hosts.remove(anyLong())).thenAnswer(invocation -> mappings.remove(invocation.getArgument(0)) != null);
+        when(hosts.listByPortForwardingRuleId(500L)).thenAnswer(invocation -> mappings.values().stream()
+                .filter(proxy -> Long.valueOf(500L).equals(proxy.getPortForwardingRuleId())).collect(java.util.stream.Collectors.toList()));
+        ReverseProxyHost first = expose("first");
+        existingRule();
+        ReverseProxyHost second = expose("second");
+        assertTrue(first.isPortForwardingRuleManaged());
+        assertTrue(second.isPortForwardingRuleManaged());
+        manager.deleteInstanceProxy(first.getId());
+        verify(rules, never()).revokePortForwardingRule(500L, true);
+        manager.deleteInstanceProxy(second.getId());
+        verify(rules).revokePortForwardingRule(500L, true);
+        verify(firewall).revokeRelatedFirewallRule(500L, true);
+        assertTrue(mappings.isEmpty());
     }
 
     @Test

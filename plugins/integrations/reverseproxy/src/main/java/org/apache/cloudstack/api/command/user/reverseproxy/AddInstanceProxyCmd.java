@@ -85,7 +85,7 @@ public class AddInstanceProxyCmd extends BaseAsyncCmd {
     private Integer port;
 
     @Parameter(name = ApiConstants.NETWORK_ID, type = CommandType.UUID, entityType = NetworkResponse.class,
-            description = "The instance network to expose; isolated networks use automatic TCP port forwarding")
+            description = "The instance network to expose; isolated networks reuse matching active TCP forwarding rules or create a new rule")
     private Long networkId;
 
     @ACL(accessType = SecurityChecker.AccessType.OperateEntry)

@@ -48,6 +48,8 @@ public interface ReverseProxyHost extends ControlledEntity, Identity, InternalId
 
     Long getPortForwardingRuleId();
 
+    boolean isPortForwardingRuleManaged();
+
     State getState();
 
     java.util.Date getCreated();

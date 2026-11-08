@@ -64,6 +64,7 @@ import com.cloud.network.NetworkModel;
 import com.cloud.network.dao.IPAddressDao;
 import com.cloud.network.dao.IPAddressVO;
 import com.cloud.network.firewall.FirewallService;
+import com.cloud.network.rules.FirewallRule;
 import com.cloud.network.rules.PortForwardingRule;
 import com.cloud.network.rules.PortForwardingRuleVO;
 import com.cloud.network.rules.RulesService;
@@ -432,10 +433,18 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
 
     /** Serializes name reservation and cleanup across management servers. */
     protected <T> T withDomainLock(final Long domainId, final Supplier<T> operation) {
-        final GlobalLock lock = GlobalLock.getInternLock("reverseproxy.domain." + domainId);
+        return withResourceLock("reverseproxy.domain." + domainId, operation);
+    }
+
+    protected <T> T withPublicIpLock(final Long publicIpId, final Supplier<T> operation) {
+        return publicIpId == null ? operation.get() : withResourceLock("reverseproxy.ip." + publicIpId, operation);
+    }
+
+    private <T> T withResourceLock(final String key, final Supplier<T> operation) {
+        final GlobalLock lock = GlobalLock.getInternLock(key);
         try {
             if (!lock.lock(30)) {
-                throw new CloudRuntimeException("The reverse proxy domain is busy; please try again");
+                throw new CloudRuntimeException("The reverse proxy resources are busy; please try again");
             }
             try {
                 return operation.get();
@@ -485,6 +494,27 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         return certificate.getId();
     }
 
+    /** Reuses only an active TCP mapping to the selected instance NIC and private port. */
+    protected PortForwardingRuleVO findExistingForwardingRule(final ReverseProxyHostVO proxy) {
+        for (final PortForwardingRuleVO rule : portForwardingRulesDao.listByIpAndNotRevoked(proxy.getPublicIpId())) {
+            if (!"tcp".equalsIgnoreCase(rule.getProtocol()) || rule.getSourcePortStart() > proxy.getPublicPort()
+                    || rule.getSourcePortEnd() < proxy.getPublicPort()) {
+                continue;
+            }
+            final int privatePort = rule.getDestinationPortStart() + proxy.getPublicPort() - rule.getSourcePortStart();
+            if (rule.getState() != FirewallRule.State.Active || rule.getVirtualMachineId() != proxy.getVmInstanceId()
+                    || rule.getNetworkId() != proxy.getNetworkId() || rule.getAccountId() != proxy.getAccountId()
+                    || rule.getDestinationIpAddress() == null || !proxy.getIpAddress().equals(rule.getDestinationIpAddress().addr())
+                    || privatePort != proxy.getForwardPort() || privatePort > rule.getDestinationPortEnd()) {
+                throw new InvalidParameterValueException("The public TCP port is already reserved by a forwarding rule that is not active "
+                        + "or does not target the selected instance IP and private port");
+            }
+            accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, rule);
+            return rule;
+        }
+        return null;
+    }
+
     @Override
     public ReverseProxyHost createInstanceProxy(final Long vmId, final String name, final String protocol, final Integer port,
             final Long domainId, final Long networkId, final Long publicIpId, final Integer publicPort) {
@@ -498,7 +528,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         }
         final UserVmVO vm = getAccessibleVm(vmId);
         final ReverseProxyDomainVO domain = resolveProxyDomain(domainId, CallContext.current().getCallingAccount(), vm);
-        return withDomainLock(domain.getId(), () -> {
+        return withDomainLock(domain.getId(), () -> withPublicIpLock(publicIpId, () -> {
             getDomainByIdOrThrow(domain.getId());
             final UserVmVO currentVm = getAccessibleVm(vmId);
             if (currentVm.getState() == VirtualMachine.State.Destroyed || currentVm.getState() == VirtualMachine.State.Expunging) {
@@ -539,19 +569,31 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             boolean npmAttempted = false;
             try {
                 if (isolated) {
-                    final PortForwardingRule request = new PortForwardingRuleVO(null, publicIpId, proxy.getPublicPort(),
-                            new Ip(nic.getIPv4Address()), port, "tcp", network.getId(), currentVm.getAccountId(),
-                            currentVm.getDomainId(), vmId);
-                    final PortForwardingRule rule = rulesService.createPortForwardingRule(request, vmId, null,
-                            network.getVpcId() == null, true);
-                    persisted.setPortForwardingRuleId(rule.getId());
-                    saveProxy(persisted);
-                    final Account caller = CallContext.current().getCallingAccount();
-                    if (network.getVpcId() == null && !firewallService.applyIngressFirewallRules(publicIpId, caller)) {
-                        throw new CloudRuntimeException("Failed to apply the port forwarding firewall rule");
-                    }
-                    if (!rulesService.applyPortForwardingRules(publicIpId, caller)) {
-                        throw new CloudRuntimeException("Failed to apply the port forwarding rule");
+                    final PortForwardingRuleVO existing = findExistingForwardingRule(persisted);
+                    if (existing != null) {
+                        persisted.setPortForwardingRuleManaged(false);
+                        persisted.setPortForwardingRuleId(existing.getId());
+                        // Ownership follows a shared managed rule until its last referencing exposure is removed.
+                        persisted.setPortForwardingRuleManaged(reverseProxyHostDao.listByPortForwardingRuleId(existing.getId())
+                                .stream().filter(other -> other.getId() != persisted.getId())
+                                .anyMatch(ReverseProxyHostVO::isPortForwardingRuleManaged));
+                        saveProxy(persisted);
+                    } else {
+                        final PortForwardingRule request = new PortForwardingRuleVO(null, publicIpId, proxy.getPublicPort(),
+                                new Ip(nic.getIPv4Address()), port, "tcp", network.getId(), currentVm.getAccountId(),
+                                currentVm.getDomainId(), vmId);
+                        final PortForwardingRule rule = rulesService.createPortForwardingRule(request, vmId, null,
+                                network.getVpcId() == null, true);
+                        persisted.setPortForwardingRuleId(rule.getId());
+                        persisted.setPortForwardingRuleManaged(true);
+                        saveProxy(persisted);
+                        final Account caller = CallContext.current().getCallingAccount();
+                        if (network.getVpcId() == null && !firewallService.applyIngressFirewallRules(publicIpId, caller)) {
+                            throw new CloudRuntimeException("Failed to apply the port forwarding firewall rule");
+                        }
+                        if (!rulesService.applyPortForwardingRules(publicIpId, caller)) {
+                            throw new CloudRuntimeException("Failed to apply the port forwarding rule");
+                        }
                     }
                 }
                 final NpmProxyHost request = new NpmProxyHost();
@@ -589,7 +631,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
                 }
                 throw new CloudRuntimeException("Failed to expose the instance: " + e.getMessage(), e);
             }
-        });
+        }));
     }
 
     protected void saveProxy(final ReverseProxyHostVO proxy) {
@@ -600,6 +642,13 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
 
     /** Deletes only resources created by this integration; safe to retry after partial cleanup. */
     protected void removeProxyResources(final ReverseProxyHostVO proxy, final NpmClient client, final boolean resolveMissingNpmId) {
+        withPublicIpLock(proxy.getPublicIpId(), () -> {
+            removeProxyResourcesLocked(proxy, client, resolveMissingNpmId);
+            return null;
+        });
+    }
+
+    private void removeProxyResourcesLocked(final ReverseProxyHostVO proxy, final NpmClient client, final boolean resolveMissingNpmId) {
         if (proxy.getNpmProxyHostId() > 0) {
             if (!client.deleteProxyHost(proxy.getNpmProxyHostId())) {
                 throw new CloudRuntimeException("Failed to remove the Nginx Proxy Manager host");
@@ -615,7 +664,8 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             }
         }
         final Long ruleId = proxy.getPortForwardingRuleId();
-        if (ruleId != null) {
+        if (ruleId != null && proxy.isPortForwardingRuleManaged()
+                && reverseProxyHostDao.listByPortForwardingRuleId(ruleId).stream().noneMatch(other -> other.getId() != proxy.getId())) {
             if (!firewallService.revokeRelatedFirewallRule(ruleId, true)) {
                 throw new CloudRuntimeException("Failed to remove the port forwarding firewall rule");
             }
@@ -1057,6 +1107,9 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         response.setProtocol(proxy.getForwardScheme());
         response.setPort(proxy.getForwardPort());
         response.setPublicPort(proxy.getPublicPort());
+        if (proxy.getPortForwardingRuleId() != null) {
+            response.setPortForwardingRuleManaged(proxy.isPortForwardingRuleManaged());
+        }
         if (proxy.getPublicIpId() != null) {
             final IPAddressVO publicIp = ipAddressDao.findById(proxy.getPublicIpId());
             if (publicIp != null) {

@@ -85,6 +85,9 @@ public class ReverseProxyHostVO implements ReverseProxyHost {
     @Column(name = "port_forwarding_rule_id")
     private Long portForwardingRuleId;
 
+    @Column(name = "port_forwarding_rule_managed", nullable = false)
+    private boolean portForwardingRuleManaged = true;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "state", nullable = false)
     private State state;
@@ -235,6 +238,15 @@ public class ReverseProxyHostVO implements ReverseProxyHost {
     @Override
     public Long getPortForwardingRuleId() {
         return portForwardingRuleId;
+    }
+
+    @Override
+    public boolean isPortForwardingRuleManaged() {
+        return portForwardingRuleManaged;
+    }
+
+    public void setPortForwardingRuleManaged(boolean managed) {
+        this.portForwardingRuleManaged = managed;
     }
 
     public void setPortForwardingRuleId(Long portForwardingRuleId) {

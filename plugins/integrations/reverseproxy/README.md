@@ -10,9 +10,9 @@ protocol.
 - **Shared network:** NPM connects directly to the selected NIC's private IPv4
   address and application port. When `reverseproxy.network.id` is set, shared
   network exposure must use that network.
-- **Isolated network:** the Expose form creates a TCP port forwarding rule from
-  an allocated public IP and public port to the selected NIC and application
-  port. NPM connects to the public IP and port. The network offering must support
+- **Isolated network:** the Expose form reuses a matching active TCP forwarding
+  rule, or creates one from the allocated public IP and public port to the
+  selected NIC and application port if no matching rule exists. NPM connects to the public IP and port. The network offering must support
   port forwarding. The public IP must belong to the instance account and the
   selected network, or be an unassigned IP in the network's VPC. Static NAT IPs
   cannot be used. NPM must be able to reach this public endpoint.
@@ -23,8 +23,16 @@ The public port may differ from the application's private port. For example,
 public TCP port `18080` can forward to application port `8080` while users access
 `https://myapp.apps.example.com` through NPM.
 
-For ordinary isolated networks the integration creates and applies the related
-ingress firewall rule. VPC tiers use CloudStack's native VPC port forwarding
+A reusable rule must be active TCP forwarding on the selected public IP and
+public port, targeting the same instance, NIC IPv4 address, and private port.
+Rules covering a port range are reusable when the selected public port maps to
+the requested private port within that range. An occupied TCP port targeting a
+different destination, or a rule still being applied, produces a conflict;
+existing rules are never overwritten. Reused rules and their firewall settings
+are left unchanged, so their existing access policies must allow NPM to connect.
+
+When a new rule is needed on an ordinary isolated network, the integration
+creates and applies the related ingress firewall rule. VPC tiers use CloudStack's native VPC port forwarding
 behavior instead of a standalone ingress firewall rule. Forwarded traffic is
 subject to the network provider's normal port forwarding and access policies.
 
@@ -80,13 +88,18 @@ instance the caller is allowed to operate. Name availability checks are rejected
 when custom names are disabled.
 
 Proxy responses retain the private `ipaddress` and application `port`, and add
-`publicipaddress`, `publicport`, and `portforwardingruleid` for isolated networks.
+`publicipaddress`, `publicport`, `portforwardingruleid`, and
+`portforwardingrulemanaged` for isolated networks. The last field is false for
+reused manual rules and true for rules created by the integration.
 
 ## Cleanup and upgrades
 
 Deleting an exposure, deleting its domain suffix, or expunging its VM removes the
 NPM host and the forwarding/firewall rules created for that exposure. Existing
-user-created rules and allocated public IPs are retained. A failed creation
+user-created rules and allocated public IPs are retained, including when an
+exposure reused an existing manual forwarding rule. Multiple exposures can share
+one forwarding rule. A rule created by the integration is removed only when its
+last referencing exposure is removed; manual rules are always retained. A failed creation
 attempt rolls back the resources it created. An incomplete rollback or deletion
 retains an `Error` mapping; retry `deleteInstanceProxy` after resolving the
 reported network or NPM failure. A domain whose proxies cannot be cleaned up is
@@ -96,10 +109,22 @@ UUID before deleting a host discovered by name. NPM's [proxy host API schema](ht
 supports this metadata object.
 
 The 4.22.1.0 to 4.22.2.0 schema upgrade adds nullable public IP, public port, and
-forwarding rule references. Existing shared network mappings need no backfill.
+forwarding rule references. The 4.22.2.0 to 4.22.3.0 upgrade adds the forwarding
+ownership flag. Existing mappings default to managed ownership because previous
+versions only created new rules. Existing shared network mappings need no backfill.
 Run the normal database upgrade before starting the updated management server.
-An installation already recorded as 4.22.2.0 will not rerun this upgrade; apply
-the three new idempotent column additions to its database before using this code.
+An installation already recorded as 4.22.3.0 will not rerun the ownership
+migration. If its `reverse_proxy_host` table already has the public IP, public
+port and forwarding rule references, add the ownership column once before
+starting this code:
+
+```sql
+ALTER TABLE cloud.reverse_proxy_host
+  ADD COLUMN port_forwarding_rule_managed TINYINT(1) NOT NULL DEFAULT 1;
+```
+
+Older snapshot installations must also have the three public forwarding
+reference columns from the 4.22.1.0 to 4.22.2.0 migration.
 The deprecated `reverseproxy.domain` setting is no longer required when domain
 suffixes have been configured using the domain management APIs.
 

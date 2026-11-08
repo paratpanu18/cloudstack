@@ -82,7 +82,8 @@ public interface ReverseProxyService extends PluggableService {
     /**
      * Creates a reverse proxy host in the Nginx Proxy Manager server for the given instance and persists the mapping.
      * The public side serves the instance's FQDN through Nginx Proxy Manager; the selected protocol is the scheme
-     * used to forward requests to the instance.
+     * used to forward requests to the instance. On isolated networks, a matching active TCP forwarding
+     * rule is reused; otherwise a new managed rule is created.
      *
      * @param vmId the id of the instance
      * @param name optional user chosen name (prefix of the FQDN); omitted for a server generated name

@@ -39,3 +39,16 @@ CREATE TABLE `cloud`.`announcement` (
   PRIMARY KEY (`id`),
   INDEX `i_announcement__enabled`(`enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Existing mappings own their forwarding rules; reused manual rules opt out of automatic deletion.
+-- Skip databases without the optional integration table, and installations that already have the column.
+SET @reverseproxy_ownership_ddl = (
+  SELECT IF(COUNT(*) > 0 AND SUM(COLUMN_NAME = 'port_forwarding_rule_managed') = 0,
+    'ALTER TABLE cloud.reverse_proxy_host ADD COLUMN port_forwarding_rule_managed TINYINT(1) NOT NULL DEFAULT 1',
+    'SELECT 1')
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = 'cloud' AND TABLE_NAME = 'reverse_proxy_host'
+);
+PREPARE reverseproxy_ownership_stmt FROM @reverseproxy_ownership_ddl;
+EXECUTE reverseproxy_ownership_stmt;
+DEALLOCATE PREPARE reverseproxy_ownership_stmt;

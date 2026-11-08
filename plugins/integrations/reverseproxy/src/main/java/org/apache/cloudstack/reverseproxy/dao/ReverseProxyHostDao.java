@@ -44,4 +44,7 @@ public interface ReverseProxyHostDao extends GenericDao<ReverseProxyHostVO, Long
      * Lists all active (not removed) proxy hosts on the given reverse proxy domain suffix
      */
     List<ReverseProxyHostVO> listByDomainId(long domainId);
+
+    /** Lists mappings that still reference a forwarding rule, including pending/error mappings. */
+    List<ReverseProxyHostVO> listByPortForwardingRuleId(long ruleId);
 }

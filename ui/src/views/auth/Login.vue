@@ -17,6 +17,7 @@
 
 <template>
   <div class="login-container">
+    <div class="login-background" aria-hidden="true"></div>
     <!-- Subtle pulsing background glow -->
     <div class="bg-pulse" aria-hidden="true">
       <span class="sweep"></span>
@@ -84,113 +85,118 @@
               </a-select-option>
             </a-select>
           </a-form-item>
-          <a-form-item ref="username" name="username">
-            <a-input
-              size="large"
-              type="text"
-              v-focus="true"
-              :placeholder="$t('label.username')"
-              v-model:value="form.username"
-            >
-              <template #prefix>
-                <user-outlined />
-              </template>
-            </a-input>
-          </a-form-item>
-          <a-form-item ref="password" name="password">
-            <a-input-password
-              size="large"
-              type="password"
-              autocomplete="false"
-              :placeholder="$t('label.password')"
-              v-model:value="form.password"
-            >
-              <template #prefix>
-                <lock-outlined />
-              </template>
-            </a-input-password>
-          </a-form-item>
-          <a-form-item ref="project" name="project" v-if="$config.displayProjectFieldOnLogin">
-            <a-input
-              size="large"
-              type="text"
-              :placeholder="$t('label.project')"
-              v-model:value="form.project"
-            >
-              <template #prefix>
-                <block-outlined />
-              </template>
-            </a-input>
-          </a-form-item>
+          <a-tabs class="login-methods" default-active-key="portal">
+            <a-tab-pane key="portal" :tab="$t('label.login')">
+              <a-form-item ref="username" name="username">
+                <a-input
+                  size="large"
+                  type="text"
+                  v-focus="true"
+                  :placeholder="$t('label.username')"
+                  v-model:value="form.username"
+                >
+                  <template #prefix>
+                    <user-outlined />
+                  </template>
+                </a-input>
+              </a-form-item>
+              <a-form-item ref="password" name="password">
+                <a-input-password
+                  size="large"
+                  type="password"
+                  autocomplete="false"
+                  :placeholder="$t('label.password')"
+                  v-model:value="form.password"
+                >
+                  <template #prefix>
+                    <lock-outlined />
+                  </template>
+                </a-input-password>
+              </a-form-item>
+              <a-form-item ref="project" name="project" v-if="$config.displayProjectFieldOnLogin">
+                <a-input
+                  size="large"
+                  type="text"
+                  :placeholder="$t('label.project')"
+                  v-model:value="form.project"
+                >
+                  <template #prefix>
+                    <block-outlined />
+                  </template>
+                </a-input>
+              </a-form-item>
 
-          <a-form-item>
-            <a-button
-              size="large"
-              type="primary"
-              html-type="submit"
-              class="login-button"
-              :loading="state.loginBtn"
-              :disabled="state.loginBtn"
-              ref="submit"
-              @click="handleSubmit"
-            >{{ $t('label.login') }}</a-button>
-          </a-form-item>
-          <a-row justify="space-between">
-            <!-- <a-col>
-            <translation-menu/>
-            </a-col> -->
-            <a-col v-if="forgotPasswordEnabled">
-              <router-link :to="{ name: 'forgotPassword' }" class="forgot-password-link">
-                {{ $t('label.forgot.password') }}
-              </router-link>
-            </a-col>
-          </a-row>
-          <div class="sso-section" v-if="idps.length > 0">
-            <p class="or">{{ $t('label.or.sign.in.with') }}</p>
-            <a-form-item name="idp" ref="idp">
-              <a-select
-                v-model:value="form.idp"
-                size="large"
-                dropdownClassName="login-dropdown"
-                showSearch
-                optionFilterProp="label"
-                :placeholder="$t('label.login.single.signon')"
-                :filterOption="(input, option) => {
-                  return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
-                }" >
-                <a-select-option v-for="(idp, idx) in idps" :key="idx" :value="idp.id" :label="idp.orgName">
-                  {{ idp.orgName }}
-                </a-select-option>
-              </a-select>
-            </a-form-item>
-            <a-button
-              size="large"
-              block
-              class="sso-button"
-              @click="handleSamlLogin"
-            >
-              <audit-outlined />
-              <span>{{ $t('label.login.single.signon') }}</span>
-            </a-button>
-          </div>
-          <div class="content" v-if="socialLogin">
-            <p class="or">{{ $t('label.or.sign.in.with') }}</p>
-          </div>
-          <div v-if="socialLogin" class="oauth-section">
-            <a-button
-              v-for="(btn, idx) in oauthButtons"
-              :key="btn.key"
-              size="large"
-              block
-              :type="idx === 0 ? 'primary' : 'default'"
-              class="oauth-login-button"
-              :href="btn.url"
-              @click="btn.click()"
-            >
-              <img v-if="btn.img" :src="btn.img" class="oauth-btn-logo" />
-              <span>{{ btn.label }}</span>
-            </a-button>
-          </div>
+              <a-form-item>
+                <a-button
+                  size="large"
+                  type="primary"
+                  html-type="submit"
+                  class="login-button"
+                  :loading="state.loginBtn"
+                  :disabled="state.loginBtn"
+                  ref="submit"
+                  @click="handleSubmit"
+                >{{ $t('label.login') }}</a-button>
+              </a-form-item>
+              <a-row justify="space-between">
+                <!-- <a-col>
+                <translation-menu/>
+                </a-col> -->
+                <a-col v-if="forgotPasswordEnabled">
+                  <router-link :to="{ name: 'forgotPassword' }" class="forgot-password-link">
+                    {{ $t('label.forgot.password') }}
+                  </router-link>
+                </a-col>
+              </a-row>
+            </a-tab-pane>
+            <a-tab-pane v-if="idps.length > 0 || socialLogin" key="sso" :tab="$t('label.login.single.signon')">
+              <div class="sso-section" v-if="idps.length > 0">
+                <a-form-item name="idp" ref="idp">
+                  <a-select
+                    v-model:value="form.idp"
+                    size="large"
+                    dropdownClassName="login-dropdown"
+                    showSearch
+                    optionFilterProp="label"
+                    :placeholder="$t('label.login.single.signon')"
+                    :filterOption="(input, option) => {
+                      return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
+                    }" >
+                    <a-select-option v-for="(idp, idx) in idps" :key="idx" :value="idp.id" :label="idp.orgName">
+                      {{ idp.orgName }}
+                    </a-select-option>
+                  </a-select>
+                </a-form-item>
+                <a-button
+                  size="large"
+                  block
+                  class="sso-button"
+                  @click="handleSamlLogin"
+                >
+                  <audit-outlined />
+                  <span>{{ $t('label.login.single.signon') }}</span>
+                </a-button>
+              </div>
+              <div class="content" v-if="socialLogin">
+                <p class="or">{{ $t('label.or.sign.in.with') }}</p>
+              </div>
+              <div v-if="socialLogin" class="oauth-section">
+                <a-button
+                  v-for="(btn, idx) in oauthButtons"
+                  :key="btn.key"
+                  size="large"
+                  block
+                  :type="idx === 0 ? 'primary' : 'default'"
+                  class="oauth-login-button"
+                  :href="btn.url"
+                  @click="btn.click()"
+                >
+                  <img v-if="btn.img" :src="btn.img" class="oauth-btn-logo" />
+                  <span>{{ btn.label }}</span>
+                </a-button>
+              </div>
+            </a-tab-pane>
+          </a-tabs>
         </a-form>
 
         <div class="login-footer" v-if="loginFooter" v-html="loginFooter"></div>
@@ -637,7 +643,43 @@ export default {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background: linear-gradient(180deg, #ffffff 0%, #fff7ef 100%);
+  background: #e5e9ec;
+  isolation: isolate;
+}
+
+.login-background {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: url('../../../public/assets/ecc-building.png') center center / cover no-repeat;
+  animation: building-drift 30s ease-in-out infinite alternate;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(25, 43, 57, 0.12), rgba(25, 43, 57, 0.3));
+  }
+}
+
+@keyframes building-drift {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.045);
+  }
+}
+
+@keyframes login-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .bg-pulse {
@@ -740,9 +782,11 @@ export default {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .login-background,
+  .login-form-wrapper,
   .pulse-glow,
   .sweep {
-    animation: none;
+    animation: none !important;
   }
 }
 
@@ -755,6 +799,9 @@ export default {
   justify-content: center;
   width: 100%;
   padding: 48px 40px;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.86) 28%, rgba(255, 255, 255, 0.68) 65%);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
 
   @media (max-width: 768px) {
     padding: 40px 24px;
@@ -764,6 +811,8 @@ export default {
 .login-form-wrapper {
   width: 100%;
   max-width: 420px;
+  animation: login-reveal 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+
 }
 
 .login-header {
@@ -771,13 +820,15 @@ export default {
   text-align: center;
 
   .brand-logo {
-    max-width: 520px;
-    height: 120px;
+    max-width: 100%;
+    max-height: 120px;
+    height: auto;
     margin: 0 auto 10px;
     display: block;
 
     @media (max-width: 768px) {
-      max-width: 280px;
+      max-width: 100%;
+      width: 280px;
       height: auto;
     }
   }
@@ -801,9 +852,23 @@ export default {
   }
 }
 
+.login-methods {
+  :deep(.ant-tabs-nav) {
+    margin-bottom: 28px;
+  }
+
+  :deep(.ant-tabs-nav-list) {
+    width: 100%;
+  }
+
+  :deep(.ant-tabs-tab) {
+    flex: 1;
+    justify-content: center;
+  }
+}
+
 .user-layout-login {
   width: 100%;
-
   :deep(.ant-form-item) {
     margin-bottom: 20px;
   }

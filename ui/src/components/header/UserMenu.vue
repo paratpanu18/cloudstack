@@ -18,7 +18,7 @@
 <template>
   <div class="user-menu">
     <span class="vpn-menu">
-      <a-button type="default" class="vpn-button" href="https://vpn.ce-nacl.com" target="_blank">
+      <a-button type="default" class="vpn-button" href="https://iam.ce.kmitl.ac.th" target="_blank">
         <DownloadOutlined />
         <span class="vpn-label">VPN Profile</span>
       </a-button>

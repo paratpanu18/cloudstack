@@ -36,6 +36,7 @@
         </template>
         <template v-else-if="column.key === 'backend'">
           {{ record.protocol }}://{{ record.ipaddress }}:{{ record.port }}
+          <div v-if="record.publicipaddress">{{ $t('label.port.forwarding') }}: {{ record.publicipaddress }}:{{ record.publicport }}</div>
         </template>
         <template v-else-if="column.key === 'virtualmachinename'">
           <router-link v-if="record.virtualmachineid" :to="{ path: '/vm/' + record.virtualmachineid }">{{ text }}</router-link>
@@ -61,6 +62,7 @@
 
 <script>
 import { getAPI, postAPI } from '@/api'
+import { waitForProxyJob } from '@/utils/reverseproxy'
 import { message } from 'ant-design-vue'
 import TooltipButton from '@/components/widgets/TooltipButton'
 
@@ -161,7 +163,7 @@ export default {
       this.loading = true
       postAPI('deleteInstanceProxy', {
         id: record.id
-      }).then(response => {
+      }).then(response => waitForProxyJob(this, response, 'deleteinstanceproxyresponse')).then(() => {
         this.$notification.success({
           message: this.$t('label.reverseproxy'),
           description: this.$t('message.success.remove.instance.proxy')

@@ -86,6 +86,38 @@ public class InstanceProxyResponse extends BaseResponse {
     @Param(description = "the domain of the instance proxy")
     private String domain;
 
+    @SerializedName("publicipaddress")
+    @Param(description = "The public IP used for isolated network port forwarding")
+    private String publicIpAddress;
+
+    @SerializedName("publicport")
+    @Param(description = "The public TCP port used for isolated network port forwarding")
+    private Integer publicPort;
+
+    @SerializedName("portforwardingruleid")
+    @Param(description = "The port forwarding rule used by the reverse proxy integration")
+    private String portForwardingRuleId;
+
+    @SerializedName("portforwardingrulemanaged")
+    @Param(description = "Whether the integration owns the forwarding rule and removes it after its last exposure is deleted")
+    private Boolean portForwardingRuleManaged;
+
+    public void setPortForwardingRuleManaged(Boolean managed) {
+        this.portForwardingRuleManaged = managed;
+    }
+
+    public void setPublicIpAddress(String publicIpAddress) {
+        this.publicIpAddress = publicIpAddress;
+    }
+
+    public void setPublicPort(Integer publicPort) {
+        this.publicPort = publicPort;
+    }
+
+    public void setPortForwardingRuleId(String portForwardingRuleId) {
+        this.portForwardingRuleId = portForwardingRuleId;
+    }
+
     public String getId() {
         return id;
     }

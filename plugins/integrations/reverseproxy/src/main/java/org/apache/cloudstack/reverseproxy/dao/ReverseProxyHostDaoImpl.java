@@ -32,6 +32,7 @@ public class ReverseProxyHostDaoImpl extends GenericDaoBase<ReverseProxyHostVO, 
     private final SearchBuilder<ReverseProxyHostVO> FqdnSearch;
     private final SearchBuilder<ReverseProxyHostVO> VmIdSearch;
     private final SearchBuilder<ReverseProxyHostVO> DomainIdSearch;
+    private final SearchBuilder<ReverseProxyHostVO> ForwardingRuleIdSearch;
 
     public ReverseProxyHostDaoImpl() {
         FqdnSearch = createSearchBuilder();
@@ -45,6 +46,10 @@ public class ReverseProxyHostDaoImpl extends GenericDaoBase<ReverseProxyHostVO, 
         DomainIdSearch = createSearchBuilder();
         DomainIdSearch.and("reverse_proxy_domain_id", DomainIdSearch.entity().getReverseProxyDomainId(), SearchCriteria.Op.EQ);
         DomainIdSearch.done();
+
+        ForwardingRuleIdSearch = createSearchBuilder();
+        ForwardingRuleIdSearch.and("forwardingRuleId", ForwardingRuleIdSearch.entity().getPortForwardingRuleId(), SearchCriteria.Op.EQ);
+        ForwardingRuleIdSearch.done();
     }
 
     @Override
@@ -75,4 +80,11 @@ public class ReverseProxyHostDaoImpl extends GenericDaoBase<ReverseProxyHostVO, 
         sc.setParameters("reverse_proxy_domain_id", domainId);
         return listBy(sc);
     }
+    @Override
+    public List<ReverseProxyHostVO> listByPortForwardingRuleId(final long ruleId) {
+        final SearchCriteria<ReverseProxyHostVO> sc = ForwardingRuleIdSearch.create();
+        sc.setParameters("forwardingRuleId", ruleId);
+        return listBy(sc);
+    }
+
 }

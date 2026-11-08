@@ -23,7 +23,10 @@ import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.api.ApiErrorCode;
-import org.apache.cloudstack.api.BaseCmd;
+import org.apache.cloudstack.api.BaseAsyncCmd;
+import com.cloud.event.EventTypes;
+import org.apache.cloudstack.reverseproxy.ReverseProxyHostVO;
+import org.apache.cloudstack.reverseproxy.dao.ReverseProxyHostDao;
 import org.apache.cloudstack.api.Parameter;
 import org.apache.cloudstack.api.ServerApiException;
 import org.apache.cloudstack.api.response.InstanceProxyResponse;
@@ -40,10 +43,38 @@ import com.cloud.utils.exception.CloudRuntimeException;
         responseHasSensitiveInfo = false,
         since = "4.22.0.0",
         authorized = {RoleType.Admin, RoleType.ResourceAdmin, RoleType.DomainAdmin, RoleType.User})
-public class DeleteInstanceProxyCmd extends BaseCmd {
+public class DeleteInstanceProxyCmd extends BaseAsyncCmd {
 
     @Inject
     public ReverseProxyService reverseProxyService;
+
+    @Inject
+    private ReverseProxyHostDao reverseProxyHostDao;
+
+    private ReverseProxyHostVO getProxy() {
+        return id == null ? null : reverseProxyHostDao.findById(id);
+    }
+
+    @Override
+    public String getEventType() {
+        return EventTypes.EVENT_NET_RULE_DELETE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "Removing instance reverse proxy " + id;
+    }
+
+    @Override
+    public String getSyncObjType() {
+        return getSyncObjId() == null ? null : ipAddressSyncObject;
+    }
+
+    @Override
+    public Long getSyncObjId() {
+        final ReverseProxyHostVO proxy = getProxy();
+        return proxy == null ? null : proxy.getPublicIpId();
+    }
 
     /////////////////////////////////////////////////////
     //////////////// API parameters /////////////////////
@@ -67,7 +98,8 @@ public class DeleteInstanceProxyCmd extends BaseCmd {
 
     @Override
     public long getEntityOwnerId() {
-        return Account.ACCOUNT_ID_SYSTEM;
+        final ReverseProxyHostVO proxy = getProxy();
+        return proxy == null ? Account.ACCOUNT_ID_SYSTEM : proxy.getAccountId();
     }
 
     @Override

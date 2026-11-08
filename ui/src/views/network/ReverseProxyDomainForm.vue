@@ -142,8 +142,8 @@ export default {
     },
     fetchNetworks () {
       this.loadingNetworks = true
-      getAPI('listNetworks', { listAll: true, type: 'Shared', details: 'min' }).then(response => {
-        this.networkOptions = (response.listnetworksresponse.network || []).map(network => {
+      getAPI('listNetworks', { listAll: true, details: 'min' }).then(response => {
+        this.networkOptions = (response.listnetworksresponse.network || []).filter(network => ['Shared', 'Isolated'].includes(network.type)).map(network => {
           return { label: network.name, value: network.id }
         })
       }).catch(() => {}).finally(() => {

@@ -22,6 +22,8 @@ import java.util.UUID;
 
 import javax.persistence.Column;
 import javax.persistence.Entity;
+import javax.persistence.EnumType;
+import javax.persistence.Enumerated;
 import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 import javax.persistence.Id;
@@ -74,6 +76,19 @@ public class ReverseProxyHostVO implements ReverseProxyHost {
     @Column(name = "domain_id", nullable = false)
     private long domainId;
 
+    @Column(name = "public_ip_id")
+    private Long publicIpId;
+
+    @Column(name = "public_port")
+    private Integer publicPort;
+
+    @Column(name = "port_forwarding_rule_id")
+    private Long portForwardingRuleId;
+
+    @Column(name = "port_forwarding_rule_managed", nullable = false)
+    private boolean portForwardingRuleManaged = true;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "state", nullable = false)
     private State state;
 
@@ -200,6 +215,42 @@ public class ReverseProxyHostVO implements ReverseProxyHost {
 
     public void setDomainId(long domainId) {
         this.domainId = domainId;
+    }
+
+    @Override
+    public Long getPublicIpId() {
+        return publicIpId;
+    }
+
+    public void setPublicIpId(Long publicIpId) {
+        this.publicIpId = publicIpId;
+    }
+
+    @Override
+    public Integer getPublicPort() {
+        return publicPort;
+    }
+
+    public void setPublicPort(Integer publicPort) {
+        this.publicPort = publicPort;
+    }
+
+    @Override
+    public Long getPortForwardingRuleId() {
+        return portForwardingRuleId;
+    }
+
+    @Override
+    public boolean isPortForwardingRuleManaged() {
+        return portForwardingRuleManaged;
+    }
+
+    public void setPortForwardingRuleManaged(boolean managed) {
+        this.portForwardingRuleManaged = managed;
+    }
+
+    public void setPortForwardingRuleId(Long portForwardingRuleId) {
+        this.portForwardingRuleId = portForwardingRuleId;
     }
 
     @Override

@@ -25,6 +25,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 import javax.inject.Inject;
@@ -59,6 +61,14 @@ import com.cloud.domain.dao.DomainDao;
 import com.cloud.exception.InvalidParameterValueException;
 import com.cloud.network.Network;
 import com.cloud.network.NetworkModel;
+import com.cloud.network.dao.IPAddressDao;
+import com.cloud.network.dao.IPAddressVO;
+import com.cloud.network.firewall.FirewallService;
+import com.cloud.network.rules.FirewallRule;
+import com.cloud.network.rules.PortForwardingRule;
+import com.cloud.network.rules.PortForwardingRuleVO;
+import com.cloud.network.rules.RulesService;
+import com.cloud.network.rules.dao.PortForwardingRulesDao;
 import com.cloud.network.dao.NetworkDao;
 import com.cloud.network.dao.NetworkVO;
 import com.cloud.projects.Project;
@@ -69,11 +79,14 @@ import com.cloud.utils.Pair;
 import com.cloud.utils.Ternary;
 import com.cloud.utils.component.ComponentLifecycleBase;
 import com.cloud.utils.db.Filter;
+import com.cloud.utils.db.GlobalLock;
 import com.cloud.utils.db.SearchBuilder;
 import com.cloud.utils.db.SearchCriteria;
 import com.cloud.utils.exception.CloudRuntimeException;
 import com.cloud.utils.fsm.StateListener;
 import com.cloud.utils.fsm.StateMachine2;
+import com.cloud.utils.net.Ip;
+import com.cloud.utils.net.NetUtils;
 import com.cloud.vm.Nic;
 import com.cloud.vm.UserVmVO;
 import com.cloud.vm.VirtualMachine;
@@ -92,6 +105,8 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
      */
     private static final Pattern DOMAIN_NAME_PATTERN =
             Pattern.compile("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$");
+
+    private static final String PROXY_UUID_META_KEY = "cloudstack_instance_proxy_uuid";
 
     private static final String HTTP = "http";
     private static final String HTTPS = "https";
@@ -122,6 +137,18 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
 
     @Inject
     private DomainDao domainDao;
+
+    @Inject
+    private IPAddressDao ipAddressDao;
+
+    @Inject
+    private RulesService rulesService;
+
+    @Inject
+    private FirewallService firewallService;
+
+    @Inject
+    private PortForwardingRulesDao portForwardingRulesDao;
 
     private volatile NpmClient npmClient;
     private volatile String npmClientSignature;
@@ -155,16 +182,13 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         if (!isEnabled()) {
             return false;
         }
-        return StringUtils.isNoneBlank(ReverseProxyDomain.value(), ReverseProxyNpmUrl.value(), ReverseProxyNpmUser.value(),
+        return StringUtils.isNoneBlank(ReverseProxyNpmUrl.value(), ReverseProxyNpmUser.value(),
                 ReverseProxyNpmPassword.value());
     }
 
     protected void validateConfiguration() {
         if (!isEnabled()) {
             throw new CloudRuntimeException("The reverse proxy integration is disabled");
-        }
-        if (StringUtils.isBlank(ReverseProxyDomain.value())) {
-            throw new CloudRuntimeException("The reverse proxy integration is not fully configured, please set 'reverseproxy.domain'");
         }
         if (StringUtils.isBlank(ReverseProxyNpmUrl.value())) {
             throw new CloudRuntimeException("The reverse proxy integration is not fully configured, please set 'reverseproxy.npm.url'");
@@ -238,7 +262,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
 
     /**
      * Checks whether the caller may use the given domain suffix: admins can use all suffixes, users need the
-     * suffix to be public, granted to their account or granted to one of the shared networks of the instance
+     * suffix to be public, granted to their account or granted to one of the networks of the instance
      */
     protected boolean canUseDomain(final Account caller, final UserVmVO vm, final ReverseProxyDomainVO domain) {
         if (caller == null) {
@@ -267,7 +291,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
     /**
      * Lists the domain suffixes the given account may use: admins get all suffixes, users get the public
      * suffixes, the suffixes granted to their account and (when a VM is given) the suffixes granted to the
-     * shared networks of the VM
+     * networks of the VM
      */
     protected List<ReverseProxyDomainVO> listAllowedDomains(final Account caller, final UserVmVO vm) {
         final List<ReverseProxyDomainVO> domains = reverseProxyDomainDao.listAll();
@@ -324,36 +348,131 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         return trimmed;
     }
 
-    /**
-     * Resolves the shared network that the instance must be proxied on
-     */
-    protected NetworkVO resolveTargetNetwork(final UserVmVO vm) {
+    /** Resolves a VM network while retaining the configured shared network restriction. */
+    protected NetworkVO resolveTargetNetwork(final UserVmVO vm, final Long networkId) {
+        if (networkId != null) {
+            final NetworkVO selected = networkDao.findById(networkId);
+            if (selected == null || (selected.getGuestType() != Network.GuestType.Shared
+                    && selected.getGuestType() != Network.GuestType.Isolated)) {
+                throw new InvalidParameterValueException("Select a shared or isolated instance network");
+            }
+            if (selected.getGuestType() == Network.GuestType.Isolated) {
+                return selected;
+            }
+            if (StringUtils.isNotBlank(ReverseProxyNetworkId.value())
+                    && !selected.getUuid().equals(ReverseProxyNetworkId.value().trim())) {
+                throw new InvalidParameterValueException("Shared network exposure must use the configured reverse proxy network");
+            }
+            return selected;
+        }
         final String configuredNetworkUuid = ReverseProxyNetworkId.value();
         if (StringUtils.isNotBlank(configuredNetworkUuid)) {
             final NetworkVO network = networkDao.findByUuid(configuredNetworkUuid.trim());
-            if (network == null) {
-                throw new CloudRuntimeException(String.format(
-                        "The configured reverse proxy network (reverseproxy.network.id='%s') does not exist, please ask your "
-                                + "administrator to fix the integration settings", configuredNetworkUuid));
+            if (network == null || network.getGuestType() != Network.GuestType.Shared) {
+                throw new CloudRuntimeException("The configured reverse proxy shared network is invalid");
             }
-            if (network.getGuestType() != Network.GuestType.Shared) {
-                throw new CloudRuntimeException(String.format(
-                        "The configured reverse proxy network '%s' is not a shared network, please ask your administrator to fix "
-                                + "the integration settings", network.getName()));
-            }
-            return network;
-        }
-        // Fall back to the default NIC of the instance when it is on a shared network
-        final Nic defaultNic = networkModel.getDefaultNic(vm.getId());
-        if (defaultNic != null) {
-            final NetworkVO network = networkDao.findById(defaultNic.getNetworkId());
-            if (network != null && network.getGuestType() == Network.GuestType.Shared) {
+            if (networkModel.getNicInNetwork(vm.getId(), network.getId()) != null) {
                 return network;
             }
         }
-        throw new InvalidParameterValueException(String.format(
-                "The instance '%s' is not on a shared network that can be proxied. Please attach it to the shared network "
-                        + "configured for the reverse proxy integration", vm.getHostName()));
+        final Nic defaultNic = networkModel.getDefaultNic(vm.getId());
+        if (defaultNic != null) {
+            final NetworkVO network = networkDao.findById(defaultNic.getNetworkId());
+            if (network != null && (network.getGuestType() == Network.GuestType.Isolated
+                    || (network.getGuestType() == Network.GuestType.Shared && StringUtils.isBlank(configuredNetworkUuid)))) {
+                return network;
+            }
+        }
+        throw new InvalidParameterValueException("The instance has no eligible shared or isolated network to expose");
+    }
+
+    protected UserVmVO getAccessibleVm(final Long vmId) {
+        final UserVmVO vm = vmId == null ? null : userVmDao.findById(vmId);
+        if (vm == null || vm.getRemoved() != null) {
+            throw new InvalidParameterValueException("Unable to find instance with id " + vmId);
+        }
+        accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, vm);
+        return vm;
+    }
+
+    protected boolean allowCustomName() {
+        return Boolean.TRUE.equals(ReverseProxyAllowCustomName.value());
+    }
+
+    protected String generateProxyName() {
+        return "vm-" + UUID.randomUUID().toString();
+    }
+
+    protected String resolveProxyName(final String name, final ReverseProxyDomainVO domain, final NpmClient client) {
+        if (StringUtils.isNotBlank(name) && !allowCustomName()) {
+            throw new InvalidParameterValueException("Custom proxy names are disabled; omit name for a server generated name");
+        }
+        for (int attempt = 0; attempt < 10; attempt++) {
+            final String candidate;
+            try {
+                candidate = validateProxyName(StringUtils.isBlank(name) ? generateProxyName() : name);
+            } catch (final InvalidParameterValueException e) {
+                if (StringUtils.isNotBlank(name)) {
+                    throw e;
+                }
+                continue;
+            }
+            final String fqdn = candidate + "." + domain.getDomain();
+            if (fqdn.length() > 253) {
+                throw new InvalidParameterValueException("The proxy name and domain suffix exceed the DNS length limit");
+            }
+            if (reverseProxyHostDao.findByFqdn(fqdn) == null && client.findProxyHostByDomain(fqdn) == null) {
+                return candidate;
+            }
+            if (StringUtils.isNotBlank(name)) {
+                throw new InvalidParameterValueException("The proxy name is already in use; choose another name");
+            }
+        }
+        throw new CloudRuntimeException("Unable to allocate a random proxy name; please try again");
+    }
+
+    /** Serializes name reservation and cleanup across management servers. */
+    protected <T> T withDomainLock(final Long domainId, final Supplier<T> operation) {
+        return withResourceLock("reverseproxy.domain." + domainId, operation);
+    }
+
+    protected <T> T withPublicIpLock(final Long publicIpId, final Supplier<T> operation) {
+        return publicIpId == null ? operation.get() : withResourceLock("reverseproxy.ip." + publicIpId, operation);
+    }
+
+    private <T> T withResourceLock(final String key, final Supplier<T> operation) {
+        final GlobalLock lock = GlobalLock.getInternLock(key);
+        try {
+            if (!lock.lock(30)) {
+                throw new CloudRuntimeException("The reverse proxy resources are busy; please try again");
+            }
+            try {
+                return operation.get();
+            } finally {
+                lock.unlock();
+            }
+        } finally {
+            lock.releaseRef();
+        }
+    }
+
+    protected IPAddressVO validatePublicIp(final UserVmVO vm, final NetworkVO network, final Long publicIpId) {
+        if (!networkModel.areServicesSupportedInNetwork(network.getId(), Network.Service.PortForwarding)) {
+            throw new InvalidParameterValueException("The selected network offering does not support port forwarding");
+        }
+        final IPAddressVO ip = publicIpId == null ? null : ipAddressDao.findById(publicIpId);
+        if (ip == null || !ip.readyToUse() || ip.getAddress() == null || !NetUtils.isValidIp4(ip.getAddress().addr())
+                || ip.isOneToOneNat() || ip.getAccountId() != vm.getAccountId() || ip.getDataCenterId() != network.getDataCenterId()) {
+            throw new InvalidParameterValueException("Select an allocated public IPv4 address owned by the instance account without static NAT");
+        }
+        accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, ip);
+        final boolean associated = Long.valueOf(network.getId()).equals(ip.getAssociatedWithNetworkId());
+        final boolean unassignedVpcIp = ip.getAssociatedWithNetworkId() == null && network.getVpcId() != null
+                && network.getVpcId().equals(ip.getVpcId());
+        if (!associated && !unassignedVpcIp) {
+            throw new InvalidParameterValueException("The public IP must belong to the selected network or its VPC");
+        }
+        return ip;
     }
 
     /**
@@ -375,115 +494,215 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         return certificate.getId();
     }
 
-    @Override
-    public ReverseProxyHost createInstanceProxy(final Long vmId, final String name, final String protocol, final Integer port, final Long domainId) {
-        validateConfiguration();
-
-        final Account caller = CallContext.current().getCallingAccount();
-        final String validatedName = validateProxyName(name);
-        final String validatedProtocol = validateProtocol(protocol);
-        if (port == null || port < 1 || port > 65535) {
-            throw new InvalidParameterValueException("The port must be between 1 and 65535");
-        }
-
-        final UserVmVO vm = userVmDao.findById(vmId);
-        if (vm == null || vm.getRemoved() != null) {
-            throw new InvalidParameterValueException(String.format("Unable to find instance with id %s", vmId));
-        }
-        accountManager.checkAccess(caller, SecurityChecker.AccessType.OperateEntry, false, vm);
-
-        final ReverseProxyDomainVO domain = resolveProxyDomain(domainId, caller, vm);
-        final NetworkVO network = resolveTargetNetwork(vm);
-        final Nic nic = networkModel.getNicInNetwork(vmId, network.getId());
-        if (nic == null || StringUtils.isBlank(nic.getIPv4Address())) {
-            throw new InvalidParameterValueException(String.format(
-                    "The instance '%s' does not have an IPv4 address on the network '%s', it cannot be proxied",
-                    vm.getHostName(), network.getName()));
-        }
-        final String ipAddress = nic.getIPv4Address();
-
-        final String fqdn = String.format("%s.%s", validatedName, domain.getDomain());
-
-        // Name availability checks (local mapping table and Nginx Proxy Manager)
-        if (reverseProxyHostDao.findByFqdn(fqdn) != null) {
-            throw new InvalidParameterValueException(String.format("The name '%s' is already in use, please choose another name", validatedName));
-        }
-        final NpmClient client = getClient();
-        if (client.findProxyHostByDomain(fqdn) != null) {
-            throw new InvalidParameterValueException(String.format("The domain '%s' is already in use, please choose another name", fqdn));
-        }
-
-        final long certificateId = resolveCertificateId(client, domain);
-
-        final NpmProxyHost request = new NpmProxyHost();
-        request.setDomainNames(Arrays.asList(fqdn));
-        request.setForwardScheme(validatedProtocol);
-        request.setForwardHost(ipAddress);
-        request.setForwardPort(port);
-        request.setCertificateId((int) certificateId);
-        request.setSslForced(ReverseProxyForceHttps.value());
-        request.setEnabled(true);
-
-        logger.debug(String.format("Creating proxy host on the Nginx Proxy Manager: %s forwarding to %s:%d (%s)", fqdn, ipAddress, port, validatedProtocol));
-        final NpmProxyHost created = client.createProxyHost(request);
-        if (created == null || created.getId() == null) {
-            throw new CloudRuntimeException("The Nginx Proxy Manager did not return the created proxy host");
-        }
-
-        final ReverseProxyHostVO proxy = new ReverseProxyHostVO();
-        proxy.setName(validatedName);
-        proxy.setFqdn(fqdn);
-        proxy.setVmInstanceId(vmId);
-        proxy.setNetworkId(network.getId());
-        proxy.setIpAddress(ipAddress);
-        proxy.setForwardScheme(validatedProtocol);
-        proxy.setForwardPort(port);
-        proxy.setNpmProxyHostId(created.getId());
-        proxy.setReverseProxyDomainId(domain.getId());
-        proxy.setAccountId(vm.getAccountId());
-        proxy.setDomainId(vm.getDomainId());
-        try {
-            final ReverseProxyHostVO persisted = reverseProxyHostDao.persist(proxy);
-            logger.info(String.format("Created instance proxy %s (id=%s) for instance %s forwarding to %s:%d (%s)",
-                    fqdn, persisted.getUuid(), vm.getHostName(), ipAddress, port, validatedProtocol));
-            return persisted;
-        } catch (final Exception e) {
-            logger.error(String.format("Failed to persist the instance proxy %s, attempting to revert the proxy host on the "
-                    + "Nginx Proxy Manager", fqdn), e);
-            try {
-                client.deleteProxyHost(created.getId());
-            } catch (final Exception cleanupException) {
-                logger.error(String.format("Failed to revert proxy host %s on the Nginx Proxy Manager after a persistence "
-                        + "failure, please remove it manually", created.getId()), cleanupException);
+    /** Reuses only an active TCP mapping to the selected instance NIC and private port. */
+    protected PortForwardingRuleVO findExistingForwardingRule(final ReverseProxyHostVO proxy) {
+        for (final PortForwardingRuleVO rule : portForwardingRulesDao.listByIpAndNotRevoked(proxy.getPublicIpId())) {
+            if (!"tcp".equalsIgnoreCase(rule.getProtocol()) || rule.getSourcePortStart() > proxy.getPublicPort()
+                    || rule.getSourcePortEnd() < proxy.getPublicPort()) {
+                continue;
             }
-            throw new CloudRuntimeException("Failed to create the instance proxy, please try again", e);
+            final int privatePort = rule.getDestinationPortStart() + proxy.getPublicPort() - rule.getSourcePortStart();
+            if (rule.getState() != FirewallRule.State.Active || rule.getVirtualMachineId() != proxy.getVmInstanceId()
+                    || rule.getNetworkId() != proxy.getNetworkId() || rule.getAccountId() != proxy.getAccountId()
+                    || rule.getDestinationIpAddress() == null || !proxy.getIpAddress().equals(rule.getDestinationIpAddress().addr())
+                    || privatePort != proxy.getForwardPort() || privatePort > rule.getDestinationPortEnd()) {
+                throw new InvalidParameterValueException("The public TCP port is already reserved by a forwarding rule that is not active "
+                        + "or does not target the selected instance IP and private port");
+            }
+            accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, rule);
+            return rule;
         }
+        return null;
+    }
+
+    @Override
+    public ReverseProxyHost createInstanceProxy(final Long vmId, final String name, final String protocol, final Integer port,
+            final Long domainId, final Long networkId, final Long publicIpId, final Integer publicPort) {
+        validateConfiguration();
+        final String validatedProtocol = validateProtocol(protocol);
+        if (port == null || port < 1 || port > 65535 || (publicPort != null && (publicPort < 1 || publicPort > 65535))) {
+            throw new InvalidParameterValueException("Ports must be between 1 and 65535");
+        }
+        if (StringUtils.isNotBlank(name) && !allowCustomName()) {
+            throw new InvalidParameterValueException("Custom proxy names are disabled; omit name for a server generated name");
+        }
+        final UserVmVO vm = getAccessibleVm(vmId);
+        final ReverseProxyDomainVO domain = resolveProxyDomain(domainId, CallContext.current().getCallingAccount(), vm);
+        return withDomainLock(domain.getId(), () -> withPublicIpLock(publicIpId, () -> {
+            getDomainByIdOrThrow(domain.getId());
+            final UserVmVO currentVm = getAccessibleVm(vmId);
+            if (currentVm.getState() == VirtualMachine.State.Destroyed || currentVm.getState() == VirtualMachine.State.Expunging) {
+                throw new InvalidParameterValueException("A destroyed or expunging instance cannot be exposed");
+            }
+            final NetworkVO network = resolveTargetNetwork(currentVm, networkId);
+            final Nic nic = networkModel.getNicInNetwork(vmId, network.getId());
+            if (nic == null || StringUtils.isBlank(nic.getIPv4Address())) {
+                throw new InvalidParameterValueException("The instance must have an IPv4 NIC in the selected network");
+            }
+            final boolean isolated = network.getGuestType() == Network.GuestType.Isolated;
+            if (!isolated && (publicIpId != null || publicPort != null)) {
+                throw new InvalidParameterValueException("Public IP and public port are only supported for isolated networks");
+            }
+            final IPAddressVO publicIp = isolated ? validatePublicIp(currentVm, network, publicIpId) : null;
+            final NpmClient client = getClient();
+            final long certificateId = resolveCertificateId(client, domain);
+            final String proxyName = resolveProxyName(name, domain, client);
+            final ReverseProxyHostVO proxy = new ReverseProxyHostVO();
+            proxy.setName(proxyName);
+            proxy.setFqdn(proxyName + "." + domain.getDomain());
+            proxy.setVmInstanceId(vmId);
+            proxy.setNetworkId(network.getId());
+            proxy.setIpAddress(nic.getIPv4Address());
+            proxy.setForwardScheme(validatedProtocol);
+            proxy.setForwardPort(port);
+            proxy.setReverseProxyDomainId(domain.getId());
+            proxy.setAccountId(currentVm.getAccountId());
+            proxy.setDomainId(currentVm.getDomainId());
+            proxy.setPublicIpId(publicIpId);
+            proxy.setPublicPort(isolated ? (publicPort == null ? port : publicPort) : null);
+            proxy.setState(ReverseProxyHost.State.Creating);
+            // Reserve the name before creating external resources. Failed cleanup retains this row for retry.
+            final ReverseProxyHostVO persisted = reverseProxyHostDao.persist(proxy);
+            if (persisted == null) {
+                throw new CloudRuntimeException("Unable to reserve the proxy name");
+            }
+            boolean npmAttempted = false;
+            try {
+                if (isolated) {
+                    final PortForwardingRuleVO existing = findExistingForwardingRule(persisted);
+                    if (existing != null) {
+                        persisted.setPortForwardingRuleManaged(false);
+                        persisted.setPortForwardingRuleId(existing.getId());
+                        // Ownership follows a shared managed rule until its last referencing exposure is removed.
+                        persisted.setPortForwardingRuleManaged(reverseProxyHostDao.listByPortForwardingRuleId(existing.getId())
+                                .stream().filter(other -> other.getId() != persisted.getId())
+                                .anyMatch(ReverseProxyHostVO::isPortForwardingRuleManaged));
+                        saveProxy(persisted);
+                    } else {
+                        final PortForwardingRule request = new PortForwardingRuleVO(null, publicIpId, proxy.getPublicPort(),
+                                new Ip(nic.getIPv4Address()), port, "tcp", network.getId(), currentVm.getAccountId(),
+                                currentVm.getDomainId(), vmId);
+                        final PortForwardingRule rule = rulesService.createPortForwardingRule(request, vmId, null,
+                                network.getVpcId() == null, true);
+                        persisted.setPortForwardingRuleId(rule.getId());
+                        persisted.setPortForwardingRuleManaged(true);
+                        saveProxy(persisted);
+                        final Account caller = CallContext.current().getCallingAccount();
+                        if (network.getVpcId() == null && !firewallService.applyIngressFirewallRules(publicIpId, caller)) {
+                            throw new CloudRuntimeException("Failed to apply the port forwarding firewall rule");
+                        }
+                        if (!rulesService.applyPortForwardingRules(publicIpId, caller)) {
+                            throw new CloudRuntimeException("Failed to apply the port forwarding rule");
+                        }
+                    }
+                }
+                final NpmProxyHost request = new NpmProxyHost();
+                request.setDomainNames(Arrays.asList(persisted.getFqdn()));
+                request.setForwardScheme(validatedProtocol);
+                request.setForwardHost(isolated ? publicIp.getAddress().addr() : nic.getIPv4Address());
+                request.setForwardPort(isolated ? persisted.getPublicPort() : port);
+                request.setCertificateId((int) certificateId);
+                request.setSslForced(ReverseProxyForceHttps.value());
+                request.setEnabled(true);
+                request.setMeta(Map.of(PROXY_UUID_META_KEY, persisted.getUuid()));
+                npmAttempted = true;
+                final NpmProxyHost created = client.createProxyHost(request);
+                if (created == null || created.getId() == null) {
+                    throw new CloudRuntimeException("Nginx Proxy Manager did not return the created proxy host");
+                }
+                persisted.setNpmProxyHostId(created.getId());
+                persisted.setState(ReverseProxyHost.State.Active);
+                saveProxy(persisted);
+                return persisted;
+            } catch (final Exception e) {
+                persisted.setState(ReverseProxyHost.State.Error);
+                try {
+                    // A timed out NPM create may have succeeded; resolve it before rolling back.
+                    removeProxyResources(persisted, client, npmAttempted);
+                } catch (final Exception cleanupException) {
+                    try {
+                        saveProxy(persisted);
+                    } catch (final Exception saveException) {
+                        cleanupException.addSuppressed(saveException);
+                    }
+                    logger.error("Failed to roll back instance proxy " + persisted.getUuid() + "; retry deleting this proxy", cleanupException);
+                    throw new CloudRuntimeException("Exposure failed and cleanup is incomplete. Delete instance proxy "
+                            + persisted.getUuid() + " to retry cleanup", e);
+                }
+                throw new CloudRuntimeException("Failed to expose the instance: " + e.getMessage(), e);
+            }
+        }));
+    }
+
+    protected void saveProxy(final ReverseProxyHostVO proxy) {
+        if (!reverseProxyHostDao.update(proxy.getId(), proxy)) {
+            throw new CloudRuntimeException("Unable to save instance proxy " + proxy.getUuid());
+        }
+    }
+
+    /** Deletes only resources created by this integration; safe to retry after partial cleanup. */
+    protected void removeProxyResources(final ReverseProxyHostVO proxy, final NpmClient client, final boolean resolveMissingNpmId) {
+        withPublicIpLock(proxy.getPublicIpId(), () -> {
+            removeProxyResourcesLocked(proxy, client, resolveMissingNpmId);
+            return null;
+        });
+    }
+
+    private void removeProxyResourcesLocked(final ReverseProxyHostVO proxy, final NpmClient client, final boolean resolveMissingNpmId) {
+        if (proxy.getNpmProxyHostId() > 0) {
+            if (!client.deleteProxyHost(proxy.getNpmProxyHostId())) {
+                throw new CloudRuntimeException("Failed to remove the Nginx Proxy Manager host");
+            }
+        } else if (resolveMissingNpmId) {
+            final NpmProxyHost host = client.findProxyHostByDomain(proxy.getFqdn());
+            // A concurrent external NPM user may have claimed this name after our availability check.
+            // Recover only the host carrying this reservation's UUID, never an unrelated host.
+            if (host != null && host.getId() != null && host.getMeta() != null
+                    && proxy.getUuid().equals(host.getMeta().get(PROXY_UUID_META_KEY))
+                    && !client.deleteProxyHost(host.getId())) {
+                throw new CloudRuntimeException("Failed to remove the Nginx Proxy Manager host");
+            }
+        }
+        final Long ruleId = proxy.getPortForwardingRuleId();
+        if (ruleId != null && proxy.isPortForwardingRuleManaged()
+                && reverseProxyHostDao.listByPortForwardingRuleId(ruleId).stream().noneMatch(other -> other.getId() != proxy.getId())) {
+            if (!firewallService.revokeRelatedFirewallRule(ruleId, true)) {
+                throw new CloudRuntimeException("Failed to remove the port forwarding firewall rule");
+            }
+            if (portForwardingRulesDao.findById(ruleId) != null && !rulesService.revokePortForwardingRule(ruleId, true)) {
+                throw new CloudRuntimeException("Failed to remove the port forwarding rule");
+            }
+        }
+        if (!reverseProxyHostDao.remove(proxy.getId())) {
+            throw new CloudRuntimeException("Unable to remove the instance proxy mapping");
+        }
+    }
+
+    protected void cleanupProxy(final ReverseProxyHostVO proxy) {
+        withDomainLock(proxy.getReverseProxyDomainId(), () -> {
+            final ReverseProxyHostVO current = reverseProxyHostDao.findById(proxy.getId());
+            if (current != null) {
+                try {
+                    removeProxyResources(current, getClient(), true);
+                } catch (final Exception e) {
+                    current.setState(ReverseProxyHost.State.Error);
+                    saveProxy(current);
+                    throw e;
+                }
+            }
+            return null;
+        });
     }
 
     @Override
     public void deleteInstanceProxy(final Long proxyId) {
         validateConfiguration();
-
-        if (proxyId == null) {
-            throw new InvalidParameterValueException("An instance proxy id is required");
-        }
-        final Account caller = CallContext.current().getCallingAccount();
-        final ReverseProxyHostVO proxy = reverseProxyHostDao.findById(proxyId);
+        final ReverseProxyHostVO proxy = proxyId == null ? null : reverseProxyHostDao.findById(proxyId);
         if (proxy == null) {
-            throw new InvalidParameterValueException(String.format("Unable to find instance proxy with id %s", proxyId));
+            throw new InvalidParameterValueException("Unable to find instance proxy with id " + proxyId);
         }
-        accountManager.checkAccess(caller, SecurityChecker.AccessType.OperateEntry, false, proxy);
-
-        final NpmClient client = getClient();
-        try {
-            client.deleteProxyHost(proxy.getNpmProxyHostId());
-        } catch (final Exception e) {
-            logger.warn(String.format("Failed to delete proxy host id=%s from the Nginx Proxy Manager while removing instance "
-                    + "proxy %s", proxy.getNpmProxyHostId(), proxy.getFqdn()), e);
-            throw new CloudRuntimeException("Failed to remove the proxy host from the Nginx Proxy Manager, please try again later");
-        }
-        reverseProxyHostDao.remove(proxy.getId());
-        logger.info(String.format("Deleted instance proxy %s (id=%s)", proxy.getFqdn(), proxy.getUuid()));
+        accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, proxy);
+        cleanupProxy(proxy);
     }
 
     @Override
@@ -491,24 +710,12 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         if (vmId == null) {
             return;
         }
-        final List<ReverseProxyHostVO> proxies = reverseProxyHostDao.listByVmId(vmId);
-        if (proxies.isEmpty()) {
-            return;
-        }
-        final NpmClient client = isConfigured() ? getClient() : null;
-        for (final ReverseProxyHostVO proxy : proxies) {
-            if (client != null) {
-                try {
-                    client.deleteProxyHost(proxy.getNpmProxyHostId());
-                } catch (final Exception e) {
-                    logger.error(String.format("Failed to delete proxy host %s (npm id=%s) from the Nginx Proxy Manager while "
-                            + "cleaning up proxies for instance id=%s, please remove it manually",
-                            proxy.getFqdn(), proxy.getNpmProxyHostId(), vmId), e);
-                    continue;
-                }
+        for (final ReverseProxyHostVO proxy : reverseProxyHostDao.listByVmId(vmId)) {
+            try {
+                cleanupProxy(proxy);
+            } catch (final Exception e) {
+                logger.error("Failed to clean up instance proxy " + proxy.getUuid() + "; retry deleting this proxy", e);
             }
-            reverseProxyHostDao.remove(proxy.getId());
-            logger.info(String.format("Cleaned up instance proxy %s for expunged instance id=%s", proxy.getFqdn(), vmId));
         }
     }
 
@@ -516,6 +723,10 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
     public CheckInstanceProxyNameResponse checkInstanceProxyName(final String name, final Long domainId, final CheckInstanceProxyNameCmd cmd) {
         validateConfiguration();
 
+        if (!allowCustomName()) {
+            throw new InvalidParameterValueException("Custom proxy names are disabled; omit name when creating an exposure");
+        }
+        final UserVmVO vm = cmd.getVirtualMachineId() == null ? null : getAccessibleVm(cmd.getVirtualMachineId());
         final CheckInstanceProxyNameResponse response = new CheckInstanceProxyNameResponse();
         String message = null;
         String validatedName = null;
@@ -529,7 +740,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             final ReverseProxyDomainVO domain;
             try {
                 final Account caller = CallContext.current().getCallingAccount();
-                domain = resolveProxyDomain(domainId, caller, null);
+                domain = resolveProxyDomain(domainId, caller, vm);
             } catch (final CloudRuntimeException e) {
                 response.setName(validatedName);
                 response.setMessage(e.getMessage());
@@ -631,32 +842,23 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         if (!isEnabled()) {
             throw new CloudRuntimeException("The reverse proxy integration is disabled");
         }
-        final ReverseProxyDomainVO domain = getDomainByIdOrThrow(id);
-        final List<ReverseProxyHostVO> proxies = reverseProxyHostDao.listByDomainId(domain.getId());
-        if (!proxies.isEmpty()) {
-            logger.info(String.format("Deleting %d proxy hosts still exposed on the reverse proxy domain suffix %s (id=%s)",
-                    proxies.size(), domain.getDomain(), domain.getUuid()));
-            final NpmClient client = isConfigured() ? getClient() : null;
-            for (final ReverseProxyHostVO proxy : proxies) {
-                if (client != null) {
-                    try {
-                        client.deleteProxyHost(proxy.getNpmProxyHostId());
-                    } catch (final Exception e) {
-                        logger.error(String.format("Failed to delete proxy host %s (npm id=%s) from the Nginx Proxy Manager while "
-                                + "deleting the reverse proxy domain suffix %s, please remove it manually",
-                                proxy.getFqdn(), proxy.getNpmProxyHostId(), domain.getDomain()), e);
-                    }
+        withDomainLock(id, () -> {
+            final ReverseProxyDomainVO domain = getDomainByIdOrThrow(id);
+            for (final ReverseProxyHostVO proxy : reverseProxyHostDao.listByDomainId(id)) {
+                try {
+                    removeProxyResources(proxy, getClient(), true);
+                } catch (final Exception e) {
+                    proxy.setState(ReverseProxyHost.State.Error);
+                    saveProxy(proxy);
+                    throw new CloudRuntimeException("Unable to clean up proxy " + proxy.getUuid() + "; domain retained for retry", e);
                 }
-                reverseProxyHostDao.remove(proxy.getId());
-                logger.info(String.format("Deleted instance proxy %s while deleting the reverse proxy domain suffix %s (id=%s)",
-                        proxy.getFqdn(), domain.getDomain(), domain.getUuid()));
             }
-        }
-        for (final ReverseProxyDomainMapVO map : reverseProxyDomainMapDao.listByDomainId(domain.getId())) {
-            reverseProxyDomainMapDao.remove(map.getId());
-        }
-        reverseProxyDomainDao.remove(domain.getId());
-        logger.info(String.format("Deleted reverse proxy domain suffix %s (id=%s)", domain.getDomain(), domain.getUuid()));
+            for (final ReverseProxyDomainMapVO map : reverseProxyDomainMapDao.listByDomainId(id)) {
+                reverseProxyDomainMapDao.remove(map.getId());
+            }
+            reverseProxyDomainDao.remove(domain.getId());
+            return null;
+        });
     }
 
     @Override
@@ -665,7 +867,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             throw new CloudRuntimeException("The reverse proxy integration is disabled");
         }
         final Account caller = CallContext.current().getCallingAccount();
-        final UserVmVO vm = cmd.getVirtualMachineId() != null ? userVmDao.findById(cmd.getVirtualMachineId()) : null;
+        final UserVmVO vm = cmd.getVirtualMachineId() != null ? getAccessibleVm(cmd.getVirtualMachineId()) : null;
         final List<ReverseProxyDomainVO> domains = listAllowedDomains(caller, vm);
         final Long domainId = cmd.getId();
         final String keyword = cmd.getKeyword();
@@ -680,7 +882,16 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
                 continue;
             }
             count++;
-            responses.add(createReverseProxyDomainResponse(domain, showDetails));
+            final ReverseProxyDomainResponse domainResponse = createReverseProxyDomainResponse(domain, showDetails);
+            if (vm != null) {
+                try {
+                    domainResponse.setDefaultNetworkId(resolveTargetNetwork(vm, null).getUuid());
+                } catch (final CloudRuntimeException e) {
+                    // Other NICs may still be selected explicitly, even if the shared network setting is stale.
+                    logger.debug("No default reverse proxy network for instance " + vm.getUuid(), e);
+                }
+            }
+            responses.add(domainResponse);
         }
         final ListResponse<ReverseProxyDomainResponse> response = new ListResponse<>();
         response.setResponses(responses, count);
@@ -699,7 +910,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
     }
 
     /**
-     * Replaces the grants of the given domain suffix with the given accounts and shared networks.
+     * Replaces the grants of the given domain suffix with the given accounts and shared or isolated networks.
      * Null lists leave the grants unchanged.
      */
     protected void updateGrants(final ReverseProxyDomainVO domain, final List<Long> accountIds, final List<Long> networkIds) {
@@ -730,9 +941,9 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
                 if (network == null) {
                     throw new InvalidParameterValueException(String.format("Unable to find network with id %s", networkId));
                 }
-                if (network.getGuestType() != Network.GuestType.Shared) {
-                    throw new InvalidParameterValueException(String.format("The network '%s' is not a shared network, only "
-                            + "shared networks can be granted access to a reverse proxy domain suffix", network.getName()));
+                if (network.getGuestType() != Network.GuestType.Shared && network.getGuestType() != Network.GuestType.Isolated) {
+                    throw new InvalidParameterValueException(String.format("The network '%s' is not a shared or isolated network; only "
+                            + "shared or isolated networks can be granted access to a reverse proxy domain suffix", network.getName()));
                 }
                 reverseProxyDomainMapDao.persist(new ReverseProxyDomainMapVO(domain.getId(), null, networkId));
             }
@@ -745,6 +956,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         response.setObjectName("reverseproxydomain");
         response.setId(domain.getUuid());
         response.setDomain(domain.getDomain());
+        response.setAllowCustomName(allowCustomName());
         response.setDescription(domain.getDescription());
         response.setPublic(domain.isPublic());
         response.setNpmCertificateId(domain.getNpmCertificateId());
@@ -894,6 +1106,22 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         response.setIpAddress(proxy.getIpAddress());
         response.setProtocol(proxy.getForwardScheme());
         response.setPort(proxy.getForwardPort());
+        response.setPublicPort(proxy.getPublicPort());
+        if (proxy.getPortForwardingRuleId() != null) {
+            response.setPortForwardingRuleManaged(proxy.isPortForwardingRuleManaged());
+        }
+        if (proxy.getPublicIpId() != null) {
+            final IPAddressVO publicIp = ipAddressDao.findById(proxy.getPublicIpId());
+            if (publicIp != null) {
+                response.setPublicIpAddress(publicIp.getAddress().addr());
+            }
+        }
+        if (proxy.getPortForwardingRuleId() != null) {
+            final PortForwardingRuleVO rule = portForwardingRulesDao.findById(proxy.getPortForwardingRuleId());
+            if (rule != null) {
+                response.setPortForwardingRuleId(rule.getUuid());
+            }
+        }
         response.setState(proxy.getState() != null ? proxy.getState().name() : ReverseProxyHost.State.Active.name());
         response.setCreated(proxy.getCreated());
 
@@ -954,7 +1182,8 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
                 ReverseProxyNpmRequestTimeout,
                 ReverseProxyNpmCertificateId,
                 ReverseProxyForceHttps,
-                ReverseProxyReservedNames
+                ReverseProxyReservedNames,
+                ReverseProxyAllowCustomName
         };
     }
 

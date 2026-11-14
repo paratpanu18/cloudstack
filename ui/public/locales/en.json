@@ -4214,6 +4214,7 @@
   "label.proxy.name": "Domain Prefix",
   "label.proxy.name.placeholder": "Optional, e.g. my-web; leave empty for a random name",
   "label.proxy.protocol": "Backend Protocol",
+  "message.proxy.protocol": "How the proxy connects to your application. Select HTTP or HTTPS to match what your application serves on the specified port.",
   "label.proxy.port": "Port",
   "label.proxy.fqdn": "Domain",
   "label.proxy.fqdn.hint": "Will be exposed as",

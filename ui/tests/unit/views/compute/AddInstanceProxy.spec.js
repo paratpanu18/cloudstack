@@ -74,6 +74,7 @@ async function mountForm () {
       mocks,
       provide: { parentFetchData: refresh },
       stubs: {
+        'a-tooltip': { props: ['title'], template: '<span :data-tooltip="title"><slot /></span>' },
         'a-select': { template: '<div><slot /></div>' },
         'a-input-number': { template: '<input />' },
         'a-input': { props: ['placeholder'], template: '<input :placeholder="placeholder" />' },
@@ -110,11 +111,14 @@ test('isolated exposure submits forwarding fields and waits for the job before s
   expect(wrapper.emitted('close-action')).toHaveLength(1)
 })
 
-test('random-only policy hides the name field and omits even a stale name from the request', async () => {
+test('random-only policy disables the visible name field, explains it in a tooltip and omits a stale name', async () => {
   customNames = false
   await mountForm()
-  expect(wrapper.html()).toContain('message.proxy.random.only')
-  expect(wrapper.find('[placeholder="label.proxy.name.placeholder"]').exists()).toBe(false)
+  const field = wrapper.find('[placeholder="label.proxy.name.placeholder"]')
+  expect(field.exists()).toBe(true)
+  expect(field.element.disabled).toBe(true)
+  expect(wrapper.find('[data-tooltip="message.proxy.random.only"]').exists()).toBe(true)
+  expect(wrapper.find('.proxy-name-input').attributes('tabindex')).toBe('0')
   await wrapper.setData({ name: 'stale-custom-name' })
   wrapper.vm.submitData()
   await flushPromises()

@@ -36,27 +36,35 @@
       </div>
     </div>
 
-    <a-alert v-if="!allowCustomName" type="info" :message="$t('message.proxy.random.only')" style="margin-bottom: 15px" />
-    <div v-else class="form__item">
+    <div class="form__item">
       <p class="form__label">{{ $t('label.proxy.name') }}</p>
-      <a-input
-        v-model:value="name"
-        :placeholder="$t('label.proxy.name.placeholder')"
-        @input="handleNameInput">
-        <template #addonAfter>
-          <span v-if="proxyDomain" class="proxy-fqdn-suffix">.{{ proxyDomain }}</span>
-          <a-tooltip :title="$t('label.proxy.random')">
-            <a-button type="text" size="small" class="proxy-random-btn" @click="randomizeName">
-              <template #icon><sync-outlined /></template>
-            </a-button>
-          </a-tooltip>
-        </template>
-      </a-input>
-      <div class="form__hint" v-if="checkingName">
+      <a-tooltip :title="!allowCustomName ? $t('message.proxy.random.only') : undefined" :trigger="['hover', 'focus']">
+        <span
+          class="proxy-name-input"
+          :class="{ 'proxy-name-input--disabled': !allowCustomName }"
+          :tabindex="!allowCustomName ? 0 : undefined"
+          :aria-label="!allowCustomName ? $t('message.proxy.random.only') : undefined">
+          <a-input
+            v-model:value="name"
+            :placeholder="$t('label.proxy.name.placeholder')"
+            :disabled="!allowCustomName"
+            @input="handleNameInput">
+            <template #addonAfter>
+              <span v-if="proxyDomain" class="proxy-fqdn-suffix">.{{ proxyDomain }}</span>
+              <a-tooltip :title="$t('label.proxy.random')">
+                <a-button type="text" size="small" class="proxy-random-btn" :disabled="!allowCustomName" @click="randomizeName">
+                  <template #icon><sync-outlined /></template>
+                </a-button>
+              </a-tooltip>
+            </template>
+          </a-input>
+        </span>
+      </a-tooltip>
+      <div class="form__hint" v-if="allowCustomName && checkingName">
         {{ $t('label.proxy.checking') }}
       </div>
       <a-alert
-        v-else-if="nameChecked && !nameAvailable"
+        v-else-if="allowCustomName && nameChecked && !nameAvailable"
         type="error"
         style="margin-top: 5px">
         <template #message>{{ nameCheckMessage }}</template>
@@ -101,7 +109,14 @@
 
     <div class="proxy-fields-row">
       <div class="form__item">
-        <p class="form__label">{{ $t('label.proxy.protocol') }}<span class="form__required" :aria-label="$t('label.required')">*</span></p>
+        <p class="form__label">
+          {{ $t('label.proxy.protocol') }}<span class="form__required" :aria-label="$t('label.required')">*</span>
+          <a-tooltip :title="$t('message.proxy.protocol')" :trigger="['hover', 'focus']">
+            <button type="button" class="proxy-help" :aria-label="$t('message.proxy.protocol')">
+              <question-circle-outlined />
+            </button>
+          </a-tooltip>
+        </p>
         <a-radio-group v-model:value="protocol">
           <a-radio value="http">http</a-radio>
           <a-radio value="https">https</a-radio>
@@ -316,6 +331,7 @@ export default {
       }
     },
     randomizeName () {
+      if (!this.allowCustomName) return
       const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
       this.name = pick(RANDOM_ADJECTIVES) + '-' + pick(RANDOM_NOUNS) + '-' + Math.floor(100 + Math.random() * 900)
       this.handleNameInput()
@@ -457,6 +473,19 @@ export default {
     padding: 0 4px;
     height: auto;
   }
+  }
+
+  .proxy-name-input {
+    display: block;
+    width: 100%;
+
+    &--disabled {
+      cursor: not-allowed;
+
+      :deep(.ant-input-group-wrapper) {
+        pointer-events: none;
+      }
+    }
   }
 
   .proxy-section-divider {

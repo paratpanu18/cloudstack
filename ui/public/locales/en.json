@@ -2120,6 +2120,8 @@
 "label.publicip": "IP address",
 "label.publicipid": "IP address ID",
 "label.publickey": "Public key",
+"label.add.ssh.key": "Add SSH key",
+"message.ssh.key.required": "Enter a name and public key.",
 "label.publicnetwork": "Public Network",
 "label.publicport": "Public port",
 "label.purgeresources": "Purge Resources",

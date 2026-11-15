@@ -17,11 +17,33 @@
 
 <template>
   <div>
-    <a-input-search
-      style="width: 25vw;float: right;margin-bottom: 10px; z-index: 8"
-      :placeholder="$t('label.search')"
-      v-model:value="filter"
-      @search="handleSearch" />
+    <div class="ssh-toolbar">
+      <a-button v-if="'registerSSHKeyPair' in $store.getters.apis" type="primary" @click="showAddKey = true">
+        {{ $t('label.add.ssh.key') }}
+      </a-button>
+      <a-input-search
+        :placeholder="$t('label.search')"
+        v-model:value="filter"
+        @search="handleSearch" />
+    </div>
+    <a-modal
+      :visible="showAddKey"
+      :title="$t('label.add.ssh.key')"
+      :confirmLoading="savingKey"
+      :closable="!savingKey"
+      :maskClosable="false"
+      :keyboard="!savingKey"
+      @ok="addKey"
+      @cancel="showAddKey = false">
+      <a-form layout="vertical">
+        <a-form-item :label="$t('label.name')" required>
+          <a-input v-model:value="keyName" :disabled="savingKey" />
+        </a-form-item>
+        <a-form-item :label="$t('label.publickey')" required>
+          <a-textarea v-model:value="publicKey" :rows="4" :disabled="savingKey" placeholder="ssh-ed25519 AAAA…" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
     <a-table
       :loading="loading"
       :columns="columns"
@@ -56,9 +78,15 @@
 </template>
 
 <script>
+import { postAPI } from '@/api'
+
 export default {
   name: 'SshKeyPairSelection',
   props: {
+    owner: {
+      type: Object,
+      default: () => ({})
+    },
     items: {
       type: Array,
       default: () => []
@@ -77,7 +105,7 @@ export default {
     },
     preFillContent: {
       type: Object,
-      default: () => {}
+      default: () => ({})
     },
     zoneId: {
       type: String,
@@ -87,6 +115,10 @@ export default {
   data () {
     return {
       filter: '',
+      showAddKey: false,
+      savingKey: false,
+      keyName: '',
+      publicKey: '',
       columns: [
         {
           key: 'name',
@@ -118,8 +150,10 @@ export default {
     rowSelection () {
       return {
         type: 'checkbox',
-        onChange: (selectedRowKeys, selectedRows) => {
-          this.$emit('select-ssh-key-pair-item', selectedRows)
+        selectedRowKeys: this.value,
+        preserveSelectedRowKeys: true,
+        onChange: (selectedRowKeys) => {
+          this.$emit('select-ssh-key-pair-item', selectedRowKeys.map(name => ({ name })))
         }
       }
     }
@@ -131,22 +165,44 @@ export default {
       }
     },
     loading () {
-      if (!this.loading) {
-        if (this.preFillContent.keypairs) {
-          this.selectedRowKeys = this.preFillContent.keypairs
-          this.$emit('select-ssh-key-pair-item', this.selectedRowKeys)
-        } else {
-          if (this.oldZoneId === this.zoneId) {
-            return
-          }
-          this.oldZoneId = this.zoneId
-          this.selectedRowKeys = []
-          this.$emit('select-ssh-key-pair-item', this.selectedRowKeys)
-        }
+      if (!this.loading && this.oldZoneId !== this.zoneId) {
+        this.oldZoneId = this.zoneId
+        const keys = this.preFillContent.keypairs || []
+        this.selectedRowKeys = keys.map(key => typeof key === 'string' ? key : key.name)
+        this.$emit('select-ssh-key-pair-item', this.selectedRowKeys.map(name => ({ name })))
       }
     }
   },
   methods: {
+    async addKey () {
+      if (this.savingKey) return
+      if (!this.keyName.trim() || !this.publicKey.trim()) {
+        this.$message.error(this.$t('message.ssh.key.required'))
+        return
+      }
+      this.savingKey = true
+      try {
+        const projectid = this.$store.getters.project?.id || this.owner.projectid
+        const params = { name: this.keyName.trim(), publickey: this.publicKey.trim() }
+        if (projectid) {
+          params.projectid = projectid
+        } else {
+          if (this.owner.account) params.account = this.owner.account
+          if (this.owner.domainid) params.domainid = this.owner.domainid
+        }
+        await postAPI('registerSSHKeyPair', params)
+        this.$emit('select-ssh-key-pair-item', [...new Set([...this.value, params.name])].map(name => ({ name })))
+        this.$message.success(this.$t('message.success.register.keypair') + ' ' + params.name)
+        this.showAddKey = false
+        this.keyName = ''
+        this.publicKey = ''
+        this.handleSearch('')
+      } catch (error) {
+        this.$notifyError(error)
+      } finally {
+        this.savingKey = false
+      }
+    },
     handleSearch (value) {
       this.filter = value
       this.options.page = 1
@@ -169,8 +225,21 @@ export default {
 </script>
 
 <style lang="less" scoped>
+  .ssh-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 5px;
+    margin-bottom: 10px;
+
+    .ant-input-search {
+      width: 25vw;
+      max-width: 100%;
+    }
+  }
+
   .ant-table-wrapper {
-    margin: 2rem 0;
+    margin: 0 0 16px;
   }
 
   :deep(.ant-table-tbody) > tr > td {

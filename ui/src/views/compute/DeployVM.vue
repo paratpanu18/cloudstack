@@ -479,6 +479,7 @@
                 <template #description>
                   <div v-if="zoneSelected">
                     <ssh-key-pair-selection
+                      :owner="owner"
                       :items="options.sshKeyPairs"
                       :row-count="rowCount.sshKeyPairs"
                       :zoneId="zoneId"

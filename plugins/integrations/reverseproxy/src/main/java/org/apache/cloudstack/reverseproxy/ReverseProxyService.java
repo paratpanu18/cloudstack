@@ -79,6 +79,10 @@ public interface ReverseProxyService extends PluggableService {
      */
     boolean isEnabled();
 
+    /** Checks the root URL of a permitted backend, temporarily forwarding isolated networks when needed. */
+    org.apache.cloudstack.api.response.InstanceProxyBackendHealthResponse checkInstanceProxyBackend(
+            Long vmId, String protocol, Integer port, Long networkId, Long publicIpId, Integer publicPort);
+
     /**
      * Creates a reverse proxy host in the Nginx Proxy Manager server for the given instance and persists the mapping.
      * The public side serves the instance's FQDN through Nginx Proxy Manager; the selected protocol is the scheme
@@ -103,6 +107,9 @@ public interface ReverseProxyService extends PluggableService {
      * @param proxyId the id of the proxy host mapping
      */
     void deleteInstanceProxy(Long proxyId);
+
+    /** Updates an existing exposure while preserving its identity and NPM host. */
+    ReverseProxyHost updateInstanceProxy(Long proxyId, String name, String protocol, Integer port, Boolean generateName);
 
     /**
      * Lists proxy hosts according to the given list command (with ACL scoping)

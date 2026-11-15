@@ -24,12 +24,14 @@ import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Date;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import org.apache.cloudstack.api.command.user.reverseproxy.CheckInstanceProxyNameCmd;
 import org.apache.cloudstack.api.command.user.reverseproxy.ListReverseProxyDomainsCmd;
 import org.apache.cloudstack.context.CallContext;
+import org.apache.cloudstack.api.response.InstanceProxyBackendHealthResponse;
 import org.apache.cloudstack.reverseproxy.client.NpmClient;
 import org.apache.cloudstack.reverseproxy.client.NpmProxyHost;
 import org.apache.cloudstack.reverseproxy.dao.ReverseProxyDomainDao;
@@ -103,8 +105,15 @@ public class ReverseProxyExposureTest {
     private final Account caller = mock(Account.class);
     private final AtomicReference<ReverseProxyHostVO> stored = new AtomicReference<>();
     private TestManager manager;
+    private PortForwardingRuleVO temporaryRule;
+    private InstanceProxyBackendHealthResponse probeResult;
+    private List<PortForwardingRuleVO> staleRules = List.of();
+    private String checkedIp;
+    private int checkedPort;
+    private int probeCalls;
 
     private class TestManager extends ReverseProxyManagerImpl {
+        boolean integrationEnabled = true;
         boolean customNames = true;
         boolean defaultNetworkUnavailable;
         Queue<String> generated = new ArrayDeque<>();
@@ -113,7 +122,7 @@ public class ReverseProxyExposureTest {
         protected void validateConfiguration() { }
 
         @Override
-        public boolean isEnabled() { return true; }
+        public boolean isEnabled() { return integrationEnabled; }
 
         @Override
         protected NetworkVO resolveTargetNetwork(UserVmVO instance, Long networkId) {
@@ -139,6 +148,17 @@ public class ReverseProxyExposureTest {
         protected <T> T withPublicIpLock(Long publicIpId, Supplier<T> operation) { return operation.get(); }
 
         @Override
+        protected InstanceProxyBackendHealthResponse probeBackend(UserVmVO instance, NetworkVO targetNetwork, String protocol, String ip, int port) {
+            probeCalls++;
+            checkedIp = ip;
+            checkedPort = port;
+            return probeResult;
+        }
+
+        @Override
+        protected List<PortForwardingRuleVO> listStaleBackendRules() { return staleRules; }
+
+        @Override
         protected String generateProxyName() { return generated.isEmpty() ? super.generateProxyName() : generated.remove(); }
     }
 
@@ -151,6 +171,12 @@ public class ReverseProxyExposureTest {
     @Before
     public void setup() throws Exception {
         manager = new TestManager();
+        probeResult = new InstanceProxyBackendHealthResponse();
+        probeResult.setHealthy(true);
+        probeResult.setHttpStatus(200);
+        probeResult.setMessage("HTTP 200 OK");
+        probeResult.setCleanupComplete(true);
+        probeResult.setCheckedAt(new Date());
         inject("reverseProxyHostDao", hosts);
         inject("reverseProxyDomainDao", domains);
         inject("reverseProxyDomainMapDao", grants);
@@ -240,6 +266,267 @@ public class ReverseProxyExposureTest {
         when(rule.getNetworkId()).thenReturn(100L);
         when(forwarding.listByIpAndNotRevoked(200L)).thenReturn(List.of(rule));
         return rule;
+    }
+
+    private ReverseProxyHostVO editableProxy() {
+        existingRule();
+        expose("app");
+        ReverseProxyHostVO proxy = stored.get();
+        NpmProxyHost host = new NpmProxyHost();
+        host.setId(99L);
+        host.setDomainNames(List.of(proxy.getFqdn()));
+        host.setMeta(Map.of("cloudstack_instance_proxy_uuid", proxy.getUuid()));
+        when(client.findProxyHostByDomain(proxy.getFqdn())).thenReturn(host);
+        org.mockito.Mockito.clearInvocations(client, rules, firewall, forwarding, hosts);
+        return proxy;
+    }
+
+    @Test
+    public void renamePreservesExposureIdentityAndManualForwarding() {
+        ReverseProxyHostVO proxy = editableProxy();
+        String uuid = proxy.getUuid();
+        manager.updateInstanceProxy(1L, "renamed", null, null, false);
+        assertEquals(uuid, proxy.getUuid());
+        assertEquals("renamed.apps.example.com", proxy.getFqdn());
+        assertEquals(99L, proxy.getNpmProxyHostId());
+        assertEquals(Long.valueOf(500L), proxy.getPortForwardingRuleId());
+        assertEquals(8080, proxy.getForwardPort());
+        verify(client).updateProxyHostDomains(99L, List.of("renamed.apps.example.com"));
+        verify(client, never()).createProxyHost(any());
+        verify(client, never()).deleteProxyHost(anyLong());
+        verify(hosts, never()).persist(any());
+        verifyNoInteractions(rules, firewall, forwarding);
+    }
+
+    @Test
+    public void renameRejectsDisabledCustomNamesAndConflicts() {
+        editableProxy();
+        manager.customNames = false;
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(1L, "renamed", null, null, false));
+        manager.customNames = true;
+        when(hosts.findByFqdn("taken.apps.example.com")).thenReturn(new ReverseProxyHostVO());
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(1L, "taken", null, null, false));
+        when(client.findProxyHostByDomain("external.apps.example.com")).thenReturn(new NpmProxyHost());
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(1L, "external", null, null, false));
+        verify(client, never()).updateProxyHostDomains(anyLong(), any());
+    }
+
+    @Test
+    public void renameChecksAccessAndRejectsInactiveOrMissingExposures() {
+        ReverseProxyHostVO proxy = editableProxy();
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(42L, "renamed", null, null, false));
+        proxy.setState(ReverseProxyHost.State.Error);
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(1L, "renamed", null, null, false));
+        proxy.setState(ReverseProxyHost.State.Active);
+        doThrow(new PermissionDeniedException("denied")).when(accounts).checkAccess(eq(caller), any(), eq(false), eq(proxy));
+        assertThrows(PermissionDeniedException.class, () -> manager.updateInstanceProxy(1L, "renamed", null, null, false));
+        verify(client, never()).updateProxyHostDomains(anyLong(), any());
+    }
+
+    @Test
+    public void renameRefusesAnUnrelatedNpmHost() {
+        ReverseProxyHostVO proxy = editableProxy();
+        NpmProxyHost host = new NpmProxyHost();
+        host.setId(99L);
+        host.setMeta(Map.of("cloudstack_instance_proxy_uuid", "another-proxy"));
+        when(client.findProxyHostByDomain(proxy.getFqdn())).thenReturn(host);
+        assertThrows(CloudRuntimeException.class, () -> manager.updateInstanceProxy(1L, "renamed", null, null, false));
+        verify(client, never()).updateProxyHostDomains(anyLong(), any());
+    }
+
+    @Test
+    public void renameRestoresOriginalDomainWhenNpmFailsOrDatabaseCannotSave() {
+        ReverseProxyHostVO proxy = editableProxy();
+        doThrow(new CloudRuntimeException("timeout")).when(client).updateProxyHostDomains(99L, List.of("renamed.apps.example.com"));
+        assertThrows(CloudRuntimeException.class, () -> manager.updateInstanceProxy(1L, "renamed", null, null, false));
+        verify(client).updateProxyHostDomains(99L, List.of("app.apps.example.com"));
+        assertEquals("app.apps.example.com", proxy.getFqdn());
+        when(hosts.update(anyLong(), any())).thenReturn(false);
+        assertThrows(CloudRuntimeException.class, () -> manager.updateInstanceProxy(1L, "other", null, null, false));
+        assertEquals("app", proxy.getName());
+        assertEquals(ReverseProxyHost.State.Active, proxy.getState());
+        verifyNoInteractions(rules, firewall, forwarding);
+    }
+
+    @Test
+    public void failedRenameRollbackMarksExposureForAdministratorFollowUp() {
+        ReverseProxyHostVO proxy = editableProxy();
+        doThrow(new CloudRuntimeException("unreachable")).when(client).updateProxyHostDomains(anyLong(), any());
+        assertThrows(CloudRuntimeException.class, () -> manager.updateInstanceProxy(1L, "renamed", null, null, false));
+        assertEquals(ReverseProxyHost.State.Error, proxy.getState());
+        verify(hosts).update(1L, proxy);
+        verify(client, never()).deleteProxyHost(anyLong());
+        verifyNoInteractions(rules, firewall, forwarding);
+    }
+
+    @Test
+    public void unchangedNameIsANoopAndRandomRenameRemainsAvailableByApi() {
+        editableProxy();
+        manager.updateInstanceProxy(1L, "app", null, null, false);
+        verify(client, never()).updateProxyHostDomains(anyLong(), any());
+        manager.customNames = false;
+        manager.generated.add("vm-random");
+        manager.updateInstanceProxy(1L, null, null, null, true);
+        assertEquals("vm-random.apps.example.com", stored.get().getFqdn());
+    }
+
+    @Test
+    public void exclusiveManagedForwardingUpdatesInPlaceWithBackendPort() throws Exception {
+        ReverseProxyHostVO proxy = editableProxy();
+        proxy.setPortForwardingRuleManaged(true);
+        PortForwardingRuleVO rule = forwarding.findById(500L);
+        when(rules.updatePortForwardingRule(any())).thenReturn(rule);
+        manager.updateInstanceProxy(1L, null, "https", 8444, false);
+        assertEquals(8444, proxy.getForwardPort());
+        assertEquals("https", proxy.getForwardScheme());
+        assertEquals(Integer.valueOf(8443), proxy.getPublicPort());
+        ArgumentCaptor<org.apache.cloudstack.api.command.user.firewall.UpdatePortForwardingRuleCmd> command =
+                ArgumentCaptor.forClass(org.apache.cloudstack.api.command.user.firewall.UpdatePortForwardingRuleCmd.class);
+        verify(rules).updatePortForwardingRule(command.capture());
+        assertEquals(Long.valueOf(500L), command.getValue().getId());
+        assertEquals(Integer.valueOf(8444), command.getValue().getPrivatePort());
+        verify(client).updateProxyHost(99L, List.of("app.apps.example.com"), "https", "203.0.113.10", 8443);
+        verify(rules, never()).createPortForwardingRule(any(), anyLong(), any(), anyBoolean(), anyBoolean());
+    }
+
+    private void replacementRule() throws Exception {
+        PortForwardingRuleVO replacement = mock(PortForwardingRuleVO.class);
+        when(replacement.getId()).thenReturn(600L);
+        when(rules.createPortForwardingRule(any(), eq(10L), isNull(), anyBoolean(), eq(true))).thenReturn(replacement);
+        when(rules.revokePortForwardingRule(600L, true)).thenReturn(true);
+        when(firewall.revokeRelatedFirewallRule(600L, true)).thenReturn(true);
+    }
+
+    @Test
+    public void privatePortEditKeepsManualForwardingAndCreatesSeparateManagedRule() throws Exception {
+        ReverseProxyHostVO proxy = editableProxy();
+        replacementRule();
+        manager.updateInstanceProxy(1L, null, "http", 8081, false);
+        assertEquals(Integer.valueOf(8081), proxy.getPublicPort());
+        assertEquals(Long.valueOf(600L), proxy.getPortForwardingRuleId());
+        assertTrue(proxy.isPortForwardingRuleManaged());
+        verify(client).updateProxyHost(99L, List.of("app.apps.example.com"), "http", "203.0.113.10", 8081);
+        verify(rules, never()).updatePortForwardingRule(any());
+        verify(rules, never()).revokePortForwardingRule(500L, true);
+        verify(firewall, never()).revokeRelatedFirewallRule(500L, true);
+    }
+
+    @Test
+    public void replacementForwardingSkipsAnOccupiedPreferredPort() throws Exception {
+        ReverseProxyHostVO proxy = editableProxy();
+        PortForwardingRuleVO oldRule = forwarding.findById(500L);
+        PortForwardingRuleVO occupied = mock(PortForwardingRuleVO.class);
+        when(occupied.getProtocol()).thenReturn("tcp");
+        when(occupied.getSourcePortStart()).thenReturn(8081);
+        when(occupied.getSourcePortEnd()).thenReturn(8081);
+        when(forwarding.listByIpAndNotRevoked(200L)).thenReturn(List.of(oldRule, occupied));
+        replacementRule();
+        manager.updateInstanceProxy(1L, null, null, 8081, false);
+        assertEquals(Integer.valueOf(49152), proxy.getPublicPort());
+        verify(client).updateProxyHost(99L, List.of("app.apps.example.com"), "http", "203.0.113.10", 49152);
+    }
+
+    @Test
+    public void privatePortEditCanReplaceAMissingForwardingRule() throws Exception {
+        ReverseProxyHostVO proxy = editableProxy();
+        proxy.setPortForwardingRuleManaged(true);
+        when(forwarding.listByIpAndNotRevoked(200L)).thenReturn(List.of());
+        replacementRule();
+        manager.updateInstanceProxy(1L, null, null, 8081, false);
+        assertEquals(Long.valueOf(600L), proxy.getPortForwardingRuleId());
+        assertEquals(8081, proxy.getForwardPort());
+        verify(rules, never()).updatePortForwardingRule(any());
+    }
+
+    @Test
+    public void privatePortEditDoesNotChangeManagedRuleSharedByAnotherExposure() throws Exception {
+        ReverseProxyHostVO proxy = editableProxy();
+        proxy.setPortForwardingRuleManaged(true);
+        ReverseProxyHostVO other = new ReverseProxyHostVO();
+        Field id = ReverseProxyHostVO.class.getDeclaredField("id");
+        id.setAccessible(true);
+        id.setLong(other, 2L);
+        when(hosts.listByPortForwardingRuleId(500L)).thenReturn(List.of(proxy, other));
+        replacementRule();
+        manager.updateInstanceProxy(1L, null, null, 8081, false);
+        assertEquals(Long.valueOf(600L), proxy.getPortForwardingRuleId());
+        verify(rules, never()).updatePortForwardingRule(any());
+        verify(rules, never()).revokePortForwardingRule(500L, true);
+    }
+
+    @Test
+    public void failedBackendUpdateRestoresNpmAndRemovesOnlyReplacementRule() throws Exception {
+        ReverseProxyHostVO proxy = editableProxy();
+        replacementRule();
+        doThrow(new CloudRuntimeException("timeout")).when(client)
+                .updateProxyHost(99L, List.of("app.apps.example.com"), "https", "203.0.113.10", 8081);
+        assertThrows(CloudRuntimeException.class, () -> manager.updateInstanceProxy(1L, null, "https", 8081, false));
+        verify(client).updateProxyHost(99L, List.of("app.apps.example.com"), "http", "203.0.113.10", 8443);
+        verify(rules).revokePortForwardingRule(600L, true);
+        verify(firewall).revokeRelatedFirewallRule(600L, true);
+        verify(rules, never()).revokePortForwardingRule(500L, true);
+        assertEquals(Long.valueOf(500L), proxy.getPortForwardingRuleId());
+        assertEquals(Integer.valueOf(8443), proxy.getPublicPort());
+        assertEquals(8080, proxy.getForwardPort());
+        assertFalse(proxy.isPortForwardingRuleManaged());
+    }
+
+    @Test
+    public void failedManagedForwardingUpdateRestoresTheOriginalPrivatePort() {
+        ReverseProxyHostVO proxy = editableProxy();
+        proxy.setPortForwardingRuleManaged(true);
+        PortForwardingRuleVO rule = forwarding.findById(500L);
+        doAnswer(invocation -> {
+            org.apache.cloudstack.api.command.user.firewall.UpdatePortForwardingRuleCmd command = invocation.getArgument(0);
+            if (command.getPrivatePort() == 8081) {
+                throw new CloudRuntimeException("router apply failed");
+            }
+            assertEquals(Integer.valueOf(8080), command.getPrivatePort());
+            return rule;
+        }).when(rules).updatePortForwardingRule(any());
+        assertThrows(CloudRuntimeException.class, () -> manager.updateInstanceProxy(1L, null, null, 8081, false));
+        verify(rules, org.mockito.Mockito.times(2)).updatePortForwardingRule(any());
+        verify(client, never()).updateProxyHost(anyLong(), any(), any(), any(), any());
+        assertEquals(ReverseProxyHost.State.Active, proxy.getState());
+        assertEquals(8080, proxy.getForwardPort());
+    }
+
+    @Test
+    public void failedReplacementCleanupRetainsTheRuleReferenceForRetry() throws Exception {
+        ReverseProxyHostVO proxy = editableProxy();
+        replacementRule();
+        when(rules.applyPortForwardingRules(200L, caller)).thenReturn(false);
+        when(firewall.revokeRelatedFirewallRule(600L, true)).thenReturn(false);
+        assertThrows(CloudRuntimeException.class, () -> manager.updateInstanceProxy(1L, null, null, 8081, false));
+        assertEquals(ReverseProxyHost.State.Error, proxy.getState());
+        assertEquals(Long.valueOf(600L), proxy.getPortForwardingRuleId());
+        assertTrue(proxy.isPortForwardingRuleManaged());
+        verify(hosts).update(1L, proxy);
+        verify(rules, never()).revokePortForwardingRule(500L, true);
+    }
+
+    @Test
+    public void sharedNetworkBackendEditUpdatesOnlyTheExistingNpmHost() {
+        ReverseProxyHostVO proxy = editableProxy();
+        proxy.setPublicIpId(null);
+        proxy.setPublicPort(null);
+        proxy.setPortForwardingRuleId(null);
+        when(network.getGuestType()).thenReturn(Network.GuestType.Shared);
+        manager.updateInstanceProxy(1L, null, "https", 8444, false);
+        verify(client).updateProxyHost(99L, List.of("app.apps.example.com"), "https", "10.0.0.10", 8444);
+        verifyNoInteractions(rules, firewall, forwarding);
+        assertEquals(8444, proxy.getForwardPort());
+    }
+
+    @Test
+    public void randomNamePolicyAllowsBackendEditsAndValidatesPortAndProtocol() {
+        editableProxy();
+        manager.customNames = false;
+        manager.updateInstanceProxy(1L, null, "https", null, false);
+        verify(client).updateProxyHost(99L, List.of("app.apps.example.com"), "https", "203.0.113.10", 8443);
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(1L, null, "ftp", null, false));
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(1L, null, null, 0, false));
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(1L, "new", null, null, true));
     }
 
     @Test
@@ -394,6 +681,143 @@ public class ReverseProxyExposureTest {
         verify(rules).revokePortForwardingRule(500L, true);
         verify(firewall).revokeRelatedFirewallRule(500L, true);
         assertTrue(mappings.isEmpty());
+    }
+
+    private void legacyTemporaryRule() {
+        temporaryRule = mock(PortForwardingRuleVO.class);
+        when(temporaryRule.getId()).thenReturn(700L);
+        when(temporaryRule.getUuid()).thenReturn("temporary-rule-uuid");
+        when(temporaryRule.getXid()).thenReturn("rphc-0123456789abcdef0123456789abcdef");
+        when(temporaryRule.getCreated()).thenReturn(new Date());
+        when(temporaryRule.getSourceIpAddressId()).thenReturn(200L);
+        when(forwarding.findById(700L)).thenReturn(temporaryRule);
+        when(firewall.revokeRelatedFirewallRule(700L, true)).thenReturn(true);
+        when(rules.revokePortForwardingRule(700L, true)).thenReturn(true);
+    }
+
+    private InstanceProxyBackendHealthResponse checkBackend() {
+        return manager.checkInstanceProxyBackend(10L, "http", 8080, 100L, 200L, 8443);
+    }
+
+    @Test
+    public void isolatedHealthCheckUsesPrivateBackendWithoutAnyForwarding() {
+        InstanceProxyBackendHealthResponse result = checkBackend();
+        assertTrue(result.getHealthy());
+        assertTrue(result.getCleanupComplete());
+        assertEquals("10.0.0.10", checkedIp);
+        assertEquals(8080, checkedPort);
+        verifyNoInteractions(rules, firewall, forwarding, client, hosts, domains, grants);
+    }
+
+    @Test
+    public void failedRouterCheckCreatesNoRulesOrNpmHosts() {
+        probeResult.setHealthy(false);
+        probeResult.setHttpStatus(503);
+        probeResult.setMessage("Backend returned HTTP 503");
+        assertFalse(checkBackend().getHealthy());
+        verifyNoInteractions(rules, firewall, forwarding, client, hosts);
+    }
+
+    @Test
+    public void healthCheckDoesNotRequirePublicIpOrForwarding() {
+        assertTrue(manager.checkInstanceProxyBackend(10L, "http", 8080, 100L, null, null).getHealthy());
+        verifyNoInteractions(ips, rules, firewall, forwarding);
+    }
+
+    @Test
+    public void healthCheckPreservesExistingManualForwarding() {
+        existingRule();
+        assertTrue(checkBackend().getHealthy());
+        verifyNoInteractions(rules, firewall, client, hosts);
+    }
+
+    @Test
+    public void healthCheckSharedNetworkUsesPrivateAddressWithoutRules() {
+        when(network.getGuestType()).thenReturn(Network.GuestType.Shared);
+        assertTrue(manager.checkInstanceProxyBackend(10L, "http", 8080, 100L, null, null).getHealthy());
+        assertEquals("10.0.0.10", checkedIp);
+        assertEquals(8080, checkedPort);
+        verifyNoInteractions(rules, firewall, client, hosts);
+    }
+
+    @Test
+    public void stoppedInstanceHealthCheckCreatesNoResources() {
+        when(vm.getState()).thenReturn(VirtualMachine.State.Stopped);
+        InstanceProxyBackendHealthResponse result = checkBackend();
+        assertFalse(result.getHealthy());
+        assertTrue(result.getMessage().contains("not running"));
+        assertEquals(0, probeCalls);
+        verifyNoInteractions(rules, firewall, client, hosts);
+    }
+
+    @Test
+    public void healthCheckEnforcesVmAccessBeforeAnyNetworkOperations() {
+        doThrow(new PermissionDeniedException("not owned")).when(accounts).checkAccess(eq(caller), any(), eq(false), eq(vm));
+        assertThrows(PermissionDeniedException.class, this::checkBackend);
+        verifyNoInteractions(rules, firewall, client, hosts);
+    }
+
+    @Test
+    public void healthCheckValidatesLegacyPublicIpOwnershipWhenProvided() {
+        when(ip.getAccountId()).thenReturn(21L);
+        assertThrows(InvalidParameterValueException.class, this::checkBackend);
+        assertEquals(0, probeCalls);
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void healthCheckIgnoresConflictingPublicForwardingAndTestsApplication() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getDestinationPortStart()).thenReturn(9000);
+        assertTrue(checkBackend().getHealthy());
+        assertEquals(1, probeCalls);
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void legacyTemporaryRulesAreCleanedEvenWhenIntegrationDisabled() {
+        legacyTemporaryRule();
+        when(temporaryRule.getCreated()).thenReturn(new Date(System.currentTimeMillis() - 600000));
+        staleRules = List.of(temporaryRule);
+        manager.integrationEnabled = false;
+        manager.cleanupStaleBackendRules();
+        verify(rules).revokePortForwardingRule(700L, true);
+    }
+
+    @Test
+    public void staleCleanupSkipsManualAndFreshRules() {
+        legacyTemporaryRule();
+        staleRules = List.of(existingRule(), temporaryRule);
+        manager.cleanupStaleBackendRules();
+        verify(rules, never()).revokePortForwardingRule(anyLong(), anyBoolean());
+    }
+
+    @Test
+    public void staleCleanupFailureIsRetriedOnLaterScan() {
+        legacyTemporaryRule();
+        when(temporaryRule.getCreated()).thenReturn(new Date(System.currentTimeMillis() - 600000));
+        staleRules = List.of(temporaryRule);
+        when(rules.revokePortForwardingRule(700L, true)).thenReturn(false, true);
+        manager.cleanupStaleBackendRules();
+        manager.cleanupStaleBackendRules();
+        verify(rules, org.mockito.Mockito.times(2)).revokePortForwardingRule(700L, true);
+    }
+
+    @Test
+    public void normalExposureCannotAdoptLegacyTemporaryHealthRule() {
+        PortForwardingRuleVO rule = existingRule();
+        when(rule.getXid()).thenReturn("rphc-0123456789abcdef0123456789abcdef");
+        assertThrows(CloudRuntimeException.class, () -> expose("app"));
+        verifyNoInteractions(rules, firewall);
+        verify(client, never()).createProxyHost(any());
+    }
+
+    @Test
+    public void healthCheckUsesVpcPrivateBackendWithoutForwarding() {
+        when(network.getVpcId()).thenReturn(300L);
+        assertTrue(checkBackend().getHealthy());
+        assertEquals("10.0.0.10", checkedIp);
+        verifyNoInteractions(rules, firewall, forwarding);
     }
 
     @Test

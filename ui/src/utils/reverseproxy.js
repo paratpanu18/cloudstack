@@ -16,7 +16,7 @@
 // under the License.
 
 // Supports both immediate responses and asynchronous network operations.
-export function waitForProxyJob (vm, response, responseKey) {
+export function waitForProxyJob (vm, response, responseKey, options = {}) {
   const result = response[responseKey]
   if (!result?.jobid) return Promise.resolve(result)
   return new Promise((resolve, reject) => {
@@ -26,7 +26,8 @@ export function waitForProxyJob (vm, response, responseKey) {
       showSuccessMessage: false,
       successMethod: resolve,
       errorMethod: error => reject(error || new Error(vm.$t('label.error'))),
-      catchMethod: error => reject(error || new Error(vm.$t('error.fetching.async.job.result')))
+      catchMethod: error => reject(error || new Error(vm.$t('error.fetching.async.job.result'))),
+      ...options
     })
   })
 }

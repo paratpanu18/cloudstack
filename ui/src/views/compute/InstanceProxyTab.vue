@@ -47,6 +47,14 @@
           <div v-if="record.publicipaddress">{{ $t('label.port.forwarding') }}: {{ record.publicipaddress }}:{{ record.publicport }}</div>
         </template>
         <template v-else-if="column.key === 'actions'">
+          <tooltip-button
+            v-if="'updateInstanceProxy' in $store.getters.apis && record.state === 'Active'"
+            :tooltip="$t('label.edit.instance.proxy')"
+            icon="edit-outlined"
+            type="primary"
+            size="small"
+            style="margin-right: 5px"
+            @onClick="editProxy(record)" />
           <a-popconfirm
             v-if="'deleteInstanceProxy' in $store.getters.apis"
             :title="$t('message.remove.instance.proxy')"
@@ -70,8 +78,28 @@
       :closable="true"
       :footer="null"
       @cancel="closeAddProxyModal">
-      <AddInstanceProxy :resource="resource" @close-action="closeAddProxyModal" />
+      <AddInstanceProxy ref="addProxyForm" :resource="resource" @close-action="closeAddProxyModal" />
     </a-modal>
+    <a-modal
+      :visible="!!editingProxy"
+      :title="$t('label.edit.instance.proxy')"
+      :width="600"
+      :maskClosable="false"
+      :closable="!editingBusy"
+      :keyboard="!editingBusy"
+      :footer="null"
+      destroyOnClose
+      @cancel="closeEditProxyModal">
+      <EditInstanceProxy
+        v-if="editingProxy"
+        :key="editingProxy.id"
+        :resource="resource"
+        :proxy="editingProxy"
+        @busy="editingBusy = $event"
+        @close-action="closeEditProxyModal"
+        @saved="editProxySaved" />
+    </a-modal>
+
   </div>
 </template>
 
@@ -81,12 +109,14 @@ import { waitForProxyJob } from '@/utils/reverseproxy'
 import { message } from 'ant-design-vue'
 import TooltipButton from '@/components/widgets/TooltipButton'
 import AddInstanceProxy from '@/views/compute/AddInstanceProxy.vue'
+import EditInstanceProxy from '@/views/compute/EditInstanceProxy.vue'
 
 export default {
   name: 'InstanceProxyTab',
   components: {
     TooltipButton,
-    AddInstanceProxy
+    AddInstanceProxy,
+    EditInstanceProxy
   },
   props: {
     resource: {
@@ -98,6 +128,8 @@ export default {
   data () {
     return {
       proxies: [],
+      editingProxy: null,
+      editingBusy: false,
       loading: false,
       showAddProxyModalVisible: false,
       columns: [
@@ -163,6 +195,17 @@ export default {
         this.loading = false
       })
     },
+    editProxy (record) {
+      this.editingProxy = record
+    },
+    closeEditProxyModal () {
+      if (!this.editingBusy) this.editingProxy = null
+    },
+    editProxySaved () {
+      this.editingProxy = null
+      this.fetchProxies()
+      if (this.parentFetchData) this.parentFetchData()
+    },
     copyFqdn (record) {
       navigator.clipboard.writeText(record.url || record.fqdn).then(() => {
         message.success(this.$t('label.copied.clipboard'))
@@ -174,6 +217,7 @@ export default {
       this.showAddProxyModalVisible = true
     },
     closeAddProxyModal () {
+      if (this.$refs.addProxyForm) this.$refs.addProxyForm.invalidateBackendHealth()
       this.showAddProxyModalVisible = false
       this.fetchProxies()
       if (this.parentFetchData) {

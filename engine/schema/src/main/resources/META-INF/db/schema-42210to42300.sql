@@ -654,3 +654,49 @@ CALL `cloud_usage`.`IDEMPOTENT_ADD_UNIQUE_INDEX`('cloud_usage.usage_volume', 'id
 
 -- Custom role for accounts/users created by LDAP autoimport (linkDomainToLdap/linkAccountToLdap)
 CALL `cloud`.`IDEMPOTENT_ADD_COLUMN`('cloud.ldap_trust_map','role_id', 'BIGINT(20) unsigned DEFAULT 0 COMMENT ''Id of the role to assign to accounts and users created by LDAP autoimport; 0 means the default role for the mapped account type'' ');
+
+-- Reverse proxy columns for databases upgrading directly to 4.23.
+-- The optional integration table may be absent; existing columns and mappings are preserved.
+SET @reverseproxy_column_ddl = (
+  SELECT IF(COUNT(*) > 0 AND SUM(COLUMN_NAME = 'public_ip_id') = 0,
+    'ALTER TABLE cloud.reverse_proxy_host ADD COLUMN public_ip_id BIGINT UNSIGNED DEFAULT NULL',
+    'SELECT 1')
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = 'cloud' AND TABLE_NAME = 'reverse_proxy_host'
+);
+PREPARE reverseproxy_column_stmt FROM @reverseproxy_column_ddl;
+EXECUTE reverseproxy_column_stmt;
+DEALLOCATE PREPARE reverseproxy_column_stmt;
+
+SET @reverseproxy_column_ddl = (
+  SELECT IF(COUNT(*) > 0 AND SUM(COLUMN_NAME = 'public_port') = 0,
+    'ALTER TABLE cloud.reverse_proxy_host ADD COLUMN public_port INT UNSIGNED DEFAULT NULL',
+    'SELECT 1')
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = 'cloud' AND TABLE_NAME = 'reverse_proxy_host'
+);
+PREPARE reverseproxy_column_stmt FROM @reverseproxy_column_ddl;
+EXECUTE reverseproxy_column_stmt;
+DEALLOCATE PREPARE reverseproxy_column_stmt;
+
+SET @reverseproxy_column_ddl = (
+  SELECT IF(COUNT(*) > 0 AND SUM(COLUMN_NAME = 'port_forwarding_rule_id') = 0,
+    'ALTER TABLE cloud.reverse_proxy_host ADD COLUMN port_forwarding_rule_id BIGINT UNSIGNED DEFAULT NULL',
+    'SELECT 1')
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = 'cloud' AND TABLE_NAME = 'reverse_proxy_host'
+);
+PREPARE reverseproxy_column_stmt FROM @reverseproxy_column_ddl;
+EXECUTE reverseproxy_column_stmt;
+DEALLOCATE PREPARE reverseproxy_column_stmt;
+
+SET @reverseproxy_column_ddl = (
+  SELECT IF(COUNT(*) > 0 AND SUM(COLUMN_NAME = 'port_forwarding_rule_managed') = 0,
+    'ALTER TABLE cloud.reverse_proxy_host ADD COLUMN port_forwarding_rule_managed TINYINT(1) NOT NULL DEFAULT 1',
+    'SELECT 1')
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = 'cloud' AND TABLE_NAME = 'reverse_proxy_host'
+);
+PREPARE reverseproxy_column_stmt FROM @reverseproxy_column_ddl;
+EXECUTE reverseproxy_column_stmt;
+DEALLOCATE PREPARE reverseproxy_column_stmt;

@@ -205,18 +205,11 @@ forwarding rule references. The 4.22.2.0 to 4.22.3.0 upgrade adds the forwarding
 ownership flag. Existing mappings default to managed ownership because previous
 versions only created new rules. Existing shared network mappings need no backfill.
 Run the normal database upgrade before starting the updated management server.
-An installation already recorded as 4.22.3.0 will not rerun the ownership
-migration. If its `reverse_proxy_host` table already has the public IP, public
-port and forwarding rule references, add the ownership column once before
-starting this code:
+The 4.23 upgrade also adds all four forwarding columns when missing, including
+for installations already recorded as 4.22.3.0. It preserves existing values and
+skips databases without the optional reverse proxy host table. No manual column
+addition is needed when upgrading to this version.
 
-```sql
-ALTER TABLE cloud.reverse_proxy_host
-  ADD COLUMN port_forwarding_rule_managed TINYINT(1) NOT NULL DEFAULT 1;
-```
-
-Older snapshot installations must also have the three public forwarding
-reference columns from the 4.22.1.0 to 4.22.2.0 migration.
 The deprecated `reverseproxy.domain` setting is no longer required when domain
 suffixes have been configured using the domain management APIs.
 

@@ -23,6 +23,10 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Date;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -38,11 +42,15 @@ import org.apache.cloudstack.api.command.admin.reverseproxy.DeleteReverseProxyDo
 import org.apache.cloudstack.api.command.admin.reverseproxy.ListReverseProxyHostsCmd;
 import org.apache.cloudstack.api.command.admin.reverseproxy.UpdateReverseProxyDomainCmd;
 import org.apache.cloudstack.api.command.user.reverseproxy.AddInstanceProxyCmd;
+import org.apache.cloudstack.api.command.user.reverseproxy.UpdateInstanceProxyCmd;
+import org.apache.cloudstack.api.command.user.firewall.UpdatePortForwardingRuleCmd;
 import org.apache.cloudstack.api.command.user.reverseproxy.CheckInstanceProxyNameCmd;
+import org.apache.cloudstack.api.command.user.reverseproxy.CheckInstanceProxyBackendCmd;
 import org.apache.cloudstack.api.command.user.reverseproxy.DeleteInstanceProxyCmd;
 import org.apache.cloudstack.api.command.user.reverseproxy.ListInstanceProxiesCmd;
 import org.apache.cloudstack.api.command.user.reverseproxy.ListReverseProxyDomainsCmd;
 import org.apache.cloudstack.api.response.CheckInstanceProxyNameResponse;
+import org.apache.cloudstack.api.response.InstanceProxyBackendHealthResponse;
 import org.apache.cloudstack.api.response.InstanceProxyResponse;
 import org.apache.cloudstack.api.response.ListResponse;
 import org.apache.cloudstack.api.response.ReverseProxyDomainResponse;
@@ -51,6 +59,12 @@ import org.apache.cloudstack.framework.config.ConfigKey;
 import org.apache.cloudstack.framework.config.Configurable;
 import org.apache.cloudstack.reverseproxy.client.NpmCertificate;
 import org.apache.cloudstack.reverseproxy.client.NpmClient;
+import org.apache.cloudstack.reverseproxy.client.VirtualRouterBackendProbe;
+import org.apache.cloudstack.engine.orchestration.service.NetworkOrchestrationService;
+import com.cloud.agent.AgentManager;
+import com.cloud.vm.dao.DomainRouterDao;
+import org.apache.cloudstack.managed.context.ManagedContextRunnable;
+import com.cloud.utils.concurrency.NamedThreadFactory;
 import org.apache.cloudstack.reverseproxy.client.NpmProxyHost;
 import org.apache.cloudstack.reverseproxy.dao.ReverseProxyDomainDao;
 import org.apache.cloudstack.reverseproxy.dao.ReverseProxyDomainMapDao;
@@ -108,6 +122,18 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
 
     private static final String PROXY_UUID_META_KEY = "cloudstack_instance_proxy_uuid";
 
+    private static final String HEALTH_RULE_PREFIX = "rphc-";
+    private static final Pattern HEALTH_RULE_PATTERN = Pattern.compile("^rphc-[a-f0-9]{32}$");
+    private ScheduledExecutorService healthCleanupExecutor;
+    @Inject
+    private DomainRouterDao domainRouterDao;
+
+    @Inject
+    private NetworkOrchestrationService networkOrchestrationService;
+
+    @Inject
+    private AgentManager agentManager;
+
     private static final String HTTP = "http";
     private static final String HTTPS = "https";
 
@@ -163,6 +189,41 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         // Register a VM state listener so that proxy hosts are cleaned up when a VM is expunged
         VirtualMachine.State.getStateMachine().registerListener(new VmExpungeStateListener());
         logger.debug("Reverse Proxy integration registered the VM expunge cleanup listener");
+        return true;
+    }
+
+    @Override
+    public synchronized boolean start() {
+        if (healthCleanupExecutor == null || healthCleanupExecutor.isShutdown()) {
+            healthCleanupExecutor = Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory("ReverseProxyHealthCleanup"));
+            // Cleanup must also run when the integration has subsequently been disabled.
+            healthCleanupExecutor.scheduleWithFixedDelay(new ManagedContextRunnable() {
+                @Override
+                protected void runInContext() {
+                    boolean registered = false;
+                    try {
+                        CallContext.register(accountManager.getSystemUser(), accountManager.getSystemAccount());
+                        registered = true;
+                        cleanupStaleBackendRules();
+                    } catch (final Exception e) {
+                        logger.error("Failed to scan temporary reverse proxy health rules; cleanup will be retried", e);
+                    } finally {
+                        if (registered) {
+                            CallContext.unregister();
+                        }
+                    }
+                }
+            }, 60, 60, TimeUnit.SECONDS);
+        }
+        return true;
+    }
+
+    @Override
+    public synchronized boolean stop() {
+        if (healthCleanupExecutor != null) {
+            healthCleanupExecutor.shutdownNow();
+            healthCleanupExecutor = null;
+        }
         return true;
     }
 
@@ -494,12 +555,110 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         return certificate.getId();
     }
 
+    protected void validateBackendPorts(final Integer port, final Integer publicPort) {
+        if (port == null || port < 1 || port > 65535 || (publicPort != null && (publicPort < 1 || publicPort > 65535))) {
+            throw new InvalidParameterValueException("Ports must be between 1 and 65535");
+        }
+    }
+
+    protected Nic resolveBackendNic(final UserVmVO vm, final NetworkVO network) {
+        final Nic nic = networkModel.getNicInNetwork(vm.getId(), network.getId());
+        if (nic == null || StringUtils.isBlank(nic.getIPv4Address())) {
+            throw new InvalidParameterValueException("The instance must have an IPv4 NIC in the selected network");
+        }
+        return nic;
+    }
+
+    protected boolean isTemporaryBackendRule(final PortForwardingRuleVO rule) {
+        return rule != null && rule.getXid() != null && HEALTH_RULE_PATTERN.matcher(rule.getXid()).matches();
+    }
+
+    protected InstanceProxyBackendHealthResponse probeBackend(final UserVmVO vm, final NetworkVO network,
+            final String protocol, final String ip, final int port) {
+        return new VirtualRouterBackendProbe(domainRouterDao, networkOrchestrationService, agentManager).check(vm, network, protocol, ip, port);
+    }
+
+    protected void cleanupTemporaryBackendRule(final PortForwardingRule rule) {
+        if (rule.getXid() == null || !HEALTH_RULE_PATTERN.matcher(rule.getXid()).matches()) {
+            throw new CloudRuntimeException("Refusing to clean up a rule not created by a backend health check");
+        }
+        final PortForwardingRuleVO current = portForwardingRulesDao.findById(rule.getId());
+        if (current != null && (!isTemporaryBackendRule(current) || !rule.getXid().equals(current.getXid()))) {
+            throw new CloudRuntimeException("Temporary forwarding identity changed; cleanup refused");
+        }
+        if (!firewallService.revokeRelatedFirewallRule(rule.getId(), true)) {
+            throw new CloudRuntimeException("Failed to remove the temporary forwarding firewall rule");
+        }
+        if (current != null && !rulesService.revokePortForwardingRule(rule.getId(), true)) {
+            throw new CloudRuntimeException("Failed to remove the temporary forwarding rule");
+        }
+    }
+
+    protected List<PortForwardingRuleVO> listStaleBackendRules() {
+        final SearchCriteria<PortForwardingRuleVO> sc = portForwardingRulesDao.createSearchCriteria();
+        sc.addAnd("xId", SearchCriteria.Op.LIKE, HEALTH_RULE_PREFIX + "%");
+        sc.addAnd("created", SearchCriteria.Op.LT, new Date(System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(5)));
+        // Include staged and revoked rules so interrupted apply/revoke operations are also recovered.
+        return portForwardingRulesDao.search(sc, null);
+    }
+
+    protected void cleanupStaleBackendRules() {
+        for (final PortForwardingRuleVO candidate : listStaleBackendRules()) {
+            try {
+                withPublicIpLock(candidate.getSourceIpAddressId(), () -> {
+                    final PortForwardingRuleVO current = portForwardingRulesDao.findById(candidate.getId());
+                    if (isTemporaryBackendRule(current) && current.getCreated() != null
+                            && current.getCreated().getTime() < System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(5)) {
+                        cleanupTemporaryBackendRule(current);
+                    }
+                    return null;
+                });
+            } catch (final Exception e) {
+                logger.error("Failed to clean up temporary backend rule " + candidate.getUuid() + "; will retry", e);
+            }
+        }
+    }
+
+    @Override
+    public InstanceProxyBackendHealthResponse checkInstanceProxyBackend(final Long vmId, final String protocol, final Integer port,
+            final Long networkId, final Long publicIpId, final Integer publicPort) {
+        if (!isEnabled()) {
+            throw new CloudRuntimeException("The reverse proxy integration is disabled");
+        }
+        final String scheme = validateProtocol(protocol);
+        validateBackendPorts(port, publicPort);
+        final UserVmVO vm = getAccessibleVm(vmId);
+        final NetworkVO network = resolveTargetNetwork(vm, networkId);
+        final Nic nic = resolveBackendNic(vm, network);
+        final boolean isolated = network.getGuestType() == Network.GuestType.Isolated;
+        if (!isolated && (publicIpId != null || publicPort != null)) {
+            throw new InvalidParameterValueException("Public IP and public port are only supported for isolated networks");
+        }
+        // Retain validation for older API clients that send public fields. They are not used by the router probe.
+        if (isolated && publicIpId != null) {
+            validatePublicIp(vm, network, publicIpId);
+        }
+        if (vm.getState() != VirtualMachine.State.Running) {
+            InstanceProxyBackendHealthResponse result = new InstanceProxyBackendHealthResponse();
+            result.setHealthy(false);
+            result.setCleanupComplete(true);
+            result.setCheckedAt(new Date());
+            result.setElapsedMs(0L);
+            result.setMessage("The instance is not running; start it before checking the backend");
+            return result;
+        }
+        return probeBackend(vm, network, scheme, nic.getIPv4Address(), port);
+    }
+
     /** Reuses only an active TCP mapping to the selected instance NIC and private port. */
     protected PortForwardingRuleVO findExistingForwardingRule(final ReverseProxyHostVO proxy) {
         for (final PortForwardingRuleVO rule : portForwardingRulesDao.listByIpAndNotRevoked(proxy.getPublicIpId())) {
             if (!"tcp".equalsIgnoreCase(rule.getProtocol()) || rule.getSourcePortStart() > proxy.getPublicPort()
                     || rule.getSourcePortEnd() < proxy.getPublicPort()) {
                 continue;
+            }
+            if (isTemporaryBackendRule(rule)) {
+                throw new InvalidParameterValueException("Temporary backend check forwarding is awaiting cleanup; retry after it has been removed");
             }
             final int privatePort = rule.getDestinationPortStart() + proxy.getPublicPort() - rule.getSourcePortStart();
             if (rule.getState() != FirewallRule.State.Active || rule.getVirtualMachineId() != proxy.getVmInstanceId()
@@ -520,9 +679,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             final Long domainId, final Long networkId, final Long publicIpId, final Integer publicPort) {
         validateConfiguration();
         final String validatedProtocol = validateProtocol(protocol);
-        if (port == null || port < 1 || port > 65535 || (publicPort != null && (publicPort < 1 || publicPort > 65535))) {
-            throw new InvalidParameterValueException("Ports must be between 1 and 65535");
-        }
+        validateBackendPorts(port, publicPort);
         if (StringUtils.isNotBlank(name) && !allowCustomName()) {
             throw new InvalidParameterValueException("Custom proxy names are disabled; omit name for a server generated name");
         }
@@ -535,10 +692,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
                 throw new InvalidParameterValueException("A destroyed or expunging instance cannot be exposed");
             }
             final NetworkVO network = resolveTargetNetwork(currentVm, networkId);
-            final Nic nic = networkModel.getNicInNetwork(vmId, network.getId());
-            if (nic == null || StringUtils.isBlank(nic.getIPv4Address())) {
-                throw new InvalidParameterValueException("The instance must have an IPv4 NIC in the selected network");
-            }
+            final Nic nic = resolveBackendNic(currentVm, network);
             final boolean isolated = network.getGuestType() == Network.GuestType.Isolated;
             if (!isolated && (publicIpId != null || publicPort != null)) {
                 throw new InvalidParameterValueException("Public IP and public port are only supported for isolated networks");
@@ -692,6 +846,168 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             }
             return null;
         });
+    }
+
+    /** Applies a private port change through the normal networking service. */
+    protected void updateForwardingPort(final long ruleId, final int port) {
+        final PortForwardingRule updated = rulesService.updatePortForwardingRule(new UpdatePortForwardingRuleCmd() {
+            @Override public Long getId() { return ruleId; }
+            @Override public Integer getPrivatePort() { return port; }
+            @Override public Integer getPrivateEndPort() { return port; }
+        });
+        if (updated == null) {
+            throw new CloudRuntimeException("Unable to update the port forwarding rule");
+        }
+    }
+
+    /** Selects an unused TCP public port without changing a manual or shared forwarding rule. */
+    private int availableUpdatePort(final long publicIpId, final int preferred) {
+        final List<PortForwardingRuleVO> rules = portForwardingRulesDao.listByIpAndNotRevoked(publicIpId);
+        for (int candidate = -1; candidate <= 65535 - 49152; candidate++) {
+            final int port = candidate < 0 ? preferred : 49152 + candidate;
+            if (rules.stream().noneMatch(rule -> "tcp".equalsIgnoreCase(rule.getProtocol())
+                    && rule.getSourcePortStart() <= port && rule.getSourcePortEnd() >= port)) {
+                return port;
+            }
+        }
+        throw new InvalidParameterValueException("No public TCP port is available for the new backend port");
+    }
+
+    @Override
+    public ReverseProxyHost updateInstanceProxy(final Long proxyId, final String name, final String protocol,
+            final Integer port, final Boolean generateName) {
+        validateConfiguration();
+        final ReverseProxyHostVO existing = proxyId == null ? null : reverseProxyHostDao.findById(proxyId);
+        if (existing == null) {
+            throw new InvalidParameterValueException("Unable to find instance proxy with id " + proxyId);
+        }
+        accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, existing);
+        return withDomainLock(existing.getReverseProxyDomainId(), () -> withPublicIpLock(existing.getPublicIpId(), () -> {
+            final ReverseProxyHostVO proxy = reverseProxyHostDao.findById(proxyId);
+            if (proxy == null || proxy.getState() != ReverseProxyHost.State.Active) {
+                throw new InvalidParameterValueException("Only an active instance exposure can be edited");
+            }
+            accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, proxy);
+            final UserVmVO vm = getAccessibleVm(proxy.getVmInstanceId());
+            final ReverseProxyDomainVO domain = resolveProxyDomain(proxy.getReverseProxyDomainId(), CallContext.current().getCallingAccount(), vm);
+            if (StringUtils.isNotBlank(name) && Boolean.TRUE.equals(generateName)) {
+                throw new InvalidParameterValueException("Name and generatename cannot be combined");
+            }
+            final String newScheme = protocol == null ? proxy.getForwardScheme() : validateProtocol(protocol);
+            final int newPort = port == null ? proxy.getForwardPort() : port;
+            validateBackendPorts(newPort, null);
+            final boolean portChanged = newPort != proxy.getForwardPort();
+            final boolean backendChanged = portChanged || !newScheme.equals(proxy.getForwardScheme());
+            if (StringUtils.isNotBlank(name) && !name.equals(proxy.getName()) && !allowCustomName()) {
+                throw new InvalidParameterValueException("Custom proxy names are disabled; omit name to preserve the current name");
+            }
+            final NpmClient client = getClient();
+            final String newName = Boolean.TRUE.equals(generateName) ? resolveProxyName(null, domain, client)
+                    : StringUtils.isBlank(name) || name.equals(proxy.getName()) ? proxy.getName() : resolveProxyName(name, domain, client);
+            if (!backendChanged && newName.equals(proxy.getName())) {
+                return proxy;
+            }
+            final NpmProxyHost currentHost = client.findProxyHostByDomain(proxy.getFqdn());
+            if (currentHost == null || currentHost.getId() == null || currentHost.getId() != proxy.getNpmProxyHostId()
+                    || currentHost.getMeta() == null || !proxy.getUuid().equals(currentHost.getMeta().get(PROXY_UUID_META_KEY))
+                    || currentHost.getDomainNames() == null || !currentHost.getDomainNames().equals(List.of(proxy.getFqdn()))) {
+                throw new CloudRuntimeException("The Nginx Proxy Manager host no longer matches this exposure; contact your administrator");
+            }
+            final String oldName = proxy.getName();
+            final String oldFqdn = proxy.getFqdn();
+            final String oldScheme = proxy.getForwardScheme();
+            final int oldPort = proxy.getForwardPort();
+            final Integer oldPublicPort = proxy.getPublicPort();
+            final Long oldRuleId = proxy.getPortForwardingRuleId();
+            final boolean oldManaged = proxy.isPortForwardingRuleManaged();
+            final boolean isolated = proxy.getPublicIpId() != null;
+            final NetworkVO network = backendChanged ? resolveTargetNetwork(vm, proxy.getNetworkId()) : null;
+            final String backendIp = backendChanged ? resolveBackendNic(vm, network).getIPv4Address() : proxy.getIpAddress();
+            if (backendChanged && !backendIp.equals(proxy.getIpAddress())) {
+                throw new InvalidParameterValueException("The instance IP has changed; recreate this exposure for its new NIC address");
+            }
+            final IPAddressVO publicIp = backendChanged && isolated ? validatePublicIp(vm, network, proxy.getPublicIpId()) : null;
+            final String npmIp = backendChanged ? isolated ? publicIp.getAddress().addr() : backendIp : null;
+            boolean forwardingUpdated = false;
+            Long createdRuleId = null;
+            boolean npmAttempted = false;
+            try {
+                if (portChanged && isolated) {
+                    final PortForwardingRuleVO rule = findExistingForwardingRule(proxy);
+                    final boolean exclusive = rule != null && oldRuleId != null && rule.getId() == oldRuleId
+                            && oldManaged && reverseProxyHostDao.listByPortForwardingRuleId(oldRuleId)
+                            .stream().noneMatch(other -> other.getId() != proxy.getId());
+                    if (exclusive) {
+                        if (!rule.getSourcePortStart().equals(rule.getSourcePortEnd())) {
+                            throw new InvalidParameterValueException("A managed forwarding port range cannot be edited through an exposure");
+                        }
+                        forwardingUpdated = true;
+                        updateForwardingPort(oldRuleId, newPort);
+                    } else {
+                        final int newPublicPort = availableUpdatePort(proxy.getPublicIpId(), newPort);
+                        final PortForwardingRule request = new PortForwardingRuleVO(null, proxy.getPublicIpId(), newPublicPort,
+                                new Ip(backendIp), newPort, "tcp", network.getId(), vm.getAccountId(), vm.getDomainId(), vm.getId());
+                        final PortForwardingRule created = rulesService.createPortForwardingRule(request, vm.getId(), null, network.getVpcId() == null, true);
+                        createdRuleId = created.getId();
+                        proxy.setPortForwardingRuleId(createdRuleId);
+                        proxy.setPortForwardingRuleManaged(true);
+                        proxy.setPublicPort(newPublicPort);
+                        final Account caller = CallContext.current().getCallingAccount();
+                        if ((network.getVpcId() == null && !firewallService.applyIngressFirewallRules(proxy.getPublicIpId(), caller))
+                                || !rulesService.applyPortForwardingRules(proxy.getPublicIpId(), caller)) {
+                            throw new CloudRuntimeException("Unable to apply forwarding for the new backend port");
+                        }
+                    }
+                }
+                npmAttempted = true;
+                if (backendChanged) {
+                    client.updateProxyHost(proxy.getNpmProxyHostId(), List.of(newName + "." + domain.getDomain()),
+                            newScheme, npmIp, isolated ? proxy.getPublicPort() : newPort);
+                } else {
+                    client.updateProxyHostDomains(proxy.getNpmProxyHostId(), List.of(newName + "." + domain.getDomain()));
+                }
+                proxy.setName(newName);
+                proxy.setFqdn(newName + "." + domain.getDomain());
+                proxy.setForwardScheme(newScheme);
+                proxy.setForwardPort(newPort);
+                saveProxy(proxy);
+                return proxy;
+            } catch (final Exception e) {
+                proxy.setName(oldName);
+                proxy.setFqdn(oldFqdn);
+                proxy.setForwardScheme(oldScheme);
+                proxy.setForwardPort(oldPort);
+                try {
+                    // A timed out update may already have succeeded. Restore it before reverting forwarding.
+                    if (npmAttempted && backendChanged) {
+                        client.updateProxyHost(proxy.getNpmProxyHostId(), List.of(oldFqdn), oldScheme, npmIp, isolated ? oldPublicPort : oldPort);
+                    } else if (npmAttempted) {
+                        client.updateProxyHostDomains(proxy.getNpmProxyHostId(), List.of(oldFqdn));
+                    }
+                    if (forwardingUpdated) {
+                        updateForwardingPort(oldRuleId, oldPort);
+                    }
+                    if (createdRuleId != null && (!firewallService.revokeRelatedFirewallRule(createdRuleId, true)
+                            || !rulesService.revokePortForwardingRule(createdRuleId, true))) {
+                        throw new CloudRuntimeException("Unable to remove the replacement forwarding rule");
+                    }
+                    proxy.setPortForwardingRuleId(oldRuleId);
+                    proxy.setPortForwardingRuleManaged(oldManaged);
+                    proxy.setPublicPort(oldPublicPort);
+                } catch (final Exception rollbackException) {
+                    proxy.setState(ReverseProxyHost.State.Error);
+                    try {
+                        saveProxy(proxy);
+                    } catch (final Exception saveException) {
+                        rollbackException.addSuppressed(saveException);
+                    }
+                    logger.error("Failed to restore instance proxy " + proxy.getUuid() + " after an update", rollbackException);
+                    throw new CloudRuntimeException("Exposure update failed and could not be fully rolled back. Contact your administrator with proxy "
+                            + proxy.getUuid(), e);
+                }
+                throw new CloudRuntimeException("Unable to update the exposure; the original settings were restored: " + e.getMessage(), e);
+            }
+        }));
     }
 
     @Override
@@ -1153,9 +1469,11 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             return cmdList;
         }
         cmdList.add(AddInstanceProxyCmd.class);
+        cmdList.add(UpdateInstanceProxyCmd.class);
         cmdList.add(ListInstanceProxiesCmd.class);
         cmdList.add(DeleteInstanceProxyCmd.class);
         cmdList.add(CheckInstanceProxyNameCmd.class);
+        cmdList.add(CheckInstanceProxyBackendCmd.class);
         cmdList.add(ListReverseProxyHostsCmd.class);
         cmdList.add(ListReverseProxyDomainsCmd.class);
         cmdList.add(AddReverseProxyDomainCmd.class);

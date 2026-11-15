@@ -16,6 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import os
 import shlex
 import subprocess
 import sys
@@ -24,13 +25,13 @@ import sys
 def run_cmd(command):
     if command is not None:
         try:
-            p = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            p = subprocess.Popen(command if isinstance(command, list) else shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdout, stderr = p.communicate()
             return_code = p.returncode
 
         except OSError as e:
-            stdout = "Check your command type"
-            stderr = "Exception occurred: %s" % e
+            stdout = b"Check your command type"
+            stderr = ("Exception occurred: %s" % e).encode()
             return_code = 1
 
         finally:
@@ -43,6 +44,11 @@ def get_command():
     arguments = sys.argv
     cmd = " ".join(arguments[1:])
     cmd_type = sys.argv[1]
+
+    if cmd_type == 'backend-health':
+        if len(arguments) != 5:
+            return None
+        return ['/usr/bin/python3', os.path.join(os.path.dirname(__file__), 'check_proxy_backend.py')] + arguments[2:]
 
     if cmd_type == 'ping':
         if '-c' in arguments:

@@ -49,6 +49,7 @@ import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.conn.ConnectTimeoutException;
 import org.apache.http.conn.ssl.NoopHostnameVerifier;
@@ -398,6 +399,38 @@ public class NpmClient {
             logger.error("Failed to create proxy host on the Nginx Proxy Manager due to: ", e);
             throwTimeoutOrServerException(e);
             return null; // never reached
+        }
+    }
+
+    /** Updates only domain names, preserving all other NPM host settings. */
+    public void updateProxyHostDomains(final long proxyHostId, final List<String> domainNames) {
+        updateProxyHost(proxyHostId, domainNames, null, null, null);
+    }
+
+    public void updateProxyHost(final long proxyHostId, final List<String> domainNames, final String scheme, final String host, final Integer port) {
+        try {
+            final Map<String, Object> changes = new HashMap<>();
+            changes.put("domain_names", domainNames);
+            if (scheme != null) {
+                changes.put("forward_scheme", scheme);
+            }
+            if (host != null) {
+                changes.put("forward_host", host);
+            }
+            if (port != null) {
+                changes.put("forward_port", port);
+            }
+            final HttpPut request = new HttpPut(npmApiUrl + "/nginx/proxy-hosts/" + proxyHostId);
+            request.setHeader("content-type", "application/json");
+            request.setEntity(new StringEntity(mapper.writeValueAsString(changes), StandardCharsets.UTF_8));
+            final HttpResponse response = execute(request);
+            try {
+                checkResponse(response, request, HttpStatus.SC_OK);
+            } finally {
+                EntityUtils.consumeQuietly(response.getEntity());
+            }
+        } catch (final IOException e) {
+            throwTimeoutOrServerException(e);
         }
     }
 

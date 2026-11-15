@@ -107,38 +107,90 @@
 
     <a-divider class="proxy-section-divider" />
 
-    <div class="proxy-fields-row">
-      <div class="form__item">
-        <p class="form__label">
-          {{ $t('label.proxy.protocol') }}<span class="form__required" :aria-label="$t('label.required')">*</span>
-          <a-tooltip :title="$t('message.proxy.protocol')" :trigger="['hover', 'focus']">
-            <button type="button" class="proxy-help" :aria-label="$t('message.proxy.protocol')">
-              <question-circle-outlined />
-            </button>
+    <section class="proxy-backend" :aria-label="$t('label.proxy.backend.connection')">
+      <div class="proxy-backend__controls">
+        <div class="proxy-backend__input">
+          <div class="proxy-backend__protocol-field">
+            <p class="form__label" id="proxy-backend-protocol-label">
+              {{ $t('label.proxy.protocol') }}<span class="form__required" :aria-label="$t('label.required')">*</span>
+              <a-tooltip :title="$t('message.proxy.protocol')" :trigger="['hover', 'focus']">
+                <button type="button" class="proxy-help" :aria-label="$t('message.proxy.protocol')">
+                  <question-circle-outlined />
+                </button>
+              </a-tooltip>
+            </p>
+            <a-radio-group
+              :value="protocol"
+              @change="selectBackendProtocol($event.target.value)"
+              class="proxy-backend__protocol"
+              :aria-label="$t('label.proxy.protocol')">
+              <a-radio-button value="http">
+                <global-outlined /> HTTP
+              </a-radio-button>
+              <a-radio-button value="https">
+                <lock-outlined /> HTTPS
+              </a-radio-button>
+            </a-radio-group>
+          </div>
+          <div class="proxy-backend__port-field">
+            <label for="proxy-backend-port" class="form__label">{{ $t('label.proxy.port') }}<span class="form__required" :aria-label="$t('label.required')">*</span></label>
+            <a-input-number
+              id="proxy-backend-port"
+              v-model:value="port"
+              :aria-label="$t('label.proxy.port')"
+              :min="1"
+              :max="65535"
+              class="proxy-backend__port" />
+          </div>
+        </div>
+        <a-button
+          v-if="'checkInstanceProxyBackend' in $store.getters.apis"
+          class="proxy-backend__test"
+          :loading="checkingBackend"
+          :disabled="!canCheckBackend"
+          @click="checkBackend">
+          <template #icon>
+            <sync-outlined v-if="backendHealth" />
+            <svg v-else viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4" /></svg>
+          </template>
+          {{ $t(backendHealth ? 'label.proxy.backend.retest' : 'label.proxy.backend.test') }}
+        </a-button>
+      </div>
+
+      <div
+        v-if="checkingBackend || backendHealth"
+        class="proxy-health"
+        :class="checkingBackend ? 'proxy-health--checking' : (backendHealth.healthy ? 'proxy-health__success' : 'proxy-health__error')"
+        role="status"
+        aria-live="polite">
+        <span class="proxy-health__icon" aria-hidden="true">
+          <loading-outlined v-if="checkingBackend" />
+          <check-outlined v-else-if="backendHealth.healthy" />
+          <close-outlined v-else />
+        </span>
+        <div class="proxy-health__summary">
+          <strong>{{ $t(checkingBackend ? 'message.proxy.backend.checking' : (backendHealth.healthy ? 'label.proxy.backend.connected' : 'message.proxy.backend.failed.short')) }}</strong>
+          <span v-if="!checkingBackend && backendHealth.elapsedms != null" class="proxy-health__elapsed">· {{ backendHealth.elapsedms }}ms</span>
+          <span v-if="!checkingBackend && backendHealth.healthy" class="proxy-health__detail">{{ $t('message.proxy.backend.upstream.healthy', { protocol: protocol.toUpperCase() }) }}</span>
+          <a-tooltip v-else-if="!checkingBackend" :title="backendHealth.message" :trigger="['hover', 'focus']">
+            <span class="proxy-health__detail" tabindex="0">{{ backendHealth.message }}</span>
           </a-tooltip>
-        </p>
-        <a-radio-group v-model:value="protocol">
-          <a-radio value="http">http</a-radio>
-          <a-radio value="https">https</a-radio>
-        </a-radio-group>
+        </div>
+        <a-tooltip v-if="backendHealth?.tlsverified === false && !checkingBackend" :title="$t('message.proxy.backend.tls.warning')" :trigger="['hover', 'focus']">
+          <button type="button" class="proxy-health__warning proxy-help" :aria-label="$t('message.proxy.backend.tls.warning')"><warning-outlined /></button>
+        </a-tooltip>
+        <a-tooltip v-if="backendHealth?.cleanupcomplete === false && !checkingBackend" :title="$t('message.proxy.backend.cleanup.warning', { id: backendHealth.temporaryruleid })" :trigger="['hover', 'focus']">
+          <button type="button" class="proxy-health__warning proxy-help" :aria-label="$t('message.proxy.backend.cleanup.warning', { id: backendHealth.temporaryruleid })"><warning-outlined /></button>
+        </a-tooltip>
+        <span v-if="!checkingBackend && backendHealth.httpstatus" class="proxy-health__result">{{ backendHealthLabel }}</span>
       </div>
-
-      <div class="form__item">
-        <p class="form__label">{{ $t('label.proxy.port') }}<span class="form__required" :aria-label="$t('label.required')">*</span></p>
-        <a-input-number
-          v-model:value="port"
-          :min="1"
-          :max="65535"
-          style="width: 100%" />
-      </div>
-
-    </div>
+    </section>
 
     <div class="submit-btn">
       <a-button @click="closeAction">
         {{ $t('label.cancel') }}
       </a-button>
-      <a-button type="primary" @click="submitData" ref="submit" :disabled="loading || loadingDomains || loadingNetworks || loadingPublicIps || checkingName || (allowCustomName && nameChecked && !nameAvailable) || !proxyDomainId || !networkId || (isIsolated && !publicIpId)">
+      <a-button type="primary" @click="submitData" ref="submit" :disabled="loading || checkingBackend || loadingDomains || loadingNetworks || loadingPublicIps || checkingName || (allowCustomName && nameChecked && !nameAvailable) || !proxyDomainId || !networkId || (isIsolated && !publicIpId)">
         {{ $t('label.ok') }}
       </a-button>
     </div>
@@ -166,6 +218,11 @@ export default {
   inject: ['parentFetchData'],
   data () {
     return {
+      backendHealth: null,
+      exposureConfirmation: null,
+      checkingBackend: false,
+      healthRequest: 0,
+      healthRun: 0,
       nics: [],
       networkId: undefined,
       defaultNetworkId: undefined,
@@ -193,6 +250,19 @@ export default {
     }
   },
   computed: {
+    healthTargetKey () {
+      return JSON.stringify([this.resource.id, this.networkId, this.protocol, this.port, this.publicIpId, this.publicPort,
+        this.nics.find(nic => nic.networkid === this.networkId)?.ipaddress])
+    },
+    backendHealthLabel () {
+      if (this.backendHealth?.healthy) return '200 OK'
+      if (this.backendHealth?.httpstatus) return `HTTP ${this.backendHealth.httpstatus}`
+      return this.$t('message.proxy.backend.failed.short')
+    },
+    canCheckBackend () {
+      return !this.loading && !this.checkingBackend && !this.loadingNetworks &&
+        !!this.networkId && ['http', 'https'].includes(this.protocol) && Number.isInteger(this.port) && this.port >= 1 && this.port <= 65535
+    },
     allowCustomName () {
       return this.proxyDomains.find(domain => domain.id === this.proxyDomainId)?.allowcustomname === true
     },
@@ -206,6 +276,11 @@ export default {
       return this.proxyDomains.map(domain => {
         return { label: domain.domain, value: domain.id }
       })
+    }
+  },
+  watch: {
+    healthTargetKey () {
+      this.invalidateBackendHealth()
     }
   },
   mounted () {
@@ -224,13 +299,26 @@ export default {
     this.fetchNetworks()
     this.fetchProxyDomains()
   },
+  deactivated () {
+    this.invalidateBackendHealth()
+  },
   beforeUnmount () {
+    this.invalidateBackendHealth()
+    this.healthRun++
     if (this.checkTimer) {
       clearTimeout(this.checkTimer)
     }
   },
   methods: {
+    selectBackendProtocol (protocol) {
+      if (protocol === this.protocol) return
+      if (this.port === (this.protocol === 'https' ? 443 : 80)) this.port = protocol === 'https' ? 443 : 80
+      this.protocol = protocol
+    },
     resetForm () {
+      this.invalidateBackendHealth()
+      this.healthRun++
+      this.checkingBackend = false
       if (this.checkTimer) {
         clearTimeout(this.checkTimer)
       }
@@ -377,11 +465,53 @@ export default {
         if (request === this.nameCheckRequest) this.checkingName = false
       })
     },
+    invalidateBackendHealth () {
+      if (this.exposureConfirmation) {
+        this.exposureConfirmation.destroy()
+        this.exposureConfirmation = null
+      }
+      this.healthRequest++
+      this.backendHealth = null
+    },
+    async checkBackend () {
+      if (!this.canCheckBackend) return
+      this.invalidateBackendHealth()
+      const request = this.healthRequest
+      const run = ++this.healthRun
+      const target = this.healthTargetKey
+      this.checkingBackend = true
+      try {
+        const response = await postAPI('checkInstanceProxyBackend', {
+          virtualmachineid: this.resource.id,
+          networkid: this.networkId,
+          protocol: this.protocol,
+          port: this.port
+        })
+        const result = await waitForProxyJob(this, response, 'checkinstanceproxybackendresponse', {
+          action: { isFetchData: false },
+          description: this.$t('label.proxy.check.backend')
+        })
+        if (request !== this.healthRequest || target !== this.healthTargetKey) return
+        const payload = result?.jobresult || result
+        const health = payload?.instanceproxybackendhealth || payload
+        if (typeof health?.healthy !== 'boolean') throw new Error(this.$t('message.proxy.backend.invalid.response'))
+        this.backendHealth = health
+      } catch (error) {
+        if (request !== this.healthRequest || target !== this.healthTargetKey) return
+        const message = error?.jobresult?.errortext || error?.response?.data?.errorresponse?.errortext || error?.message ||
+          this.$t('message.proxy.backend.failed')
+        this.backendHealth = { healthy: false, message }
+      } finally {
+        if (run === this.healthRun) this.checkingBackend = false
+      }
+    },
     closeAction () {
+      this.invalidateBackendHealth()
       this.$emit('close-action')
     },
-    submitData () {
-      if (this.loading || this.loadingDomains || this.loadingNetworks || this.loadingPublicIps || this.checkingName ||
+    submitData (confirmed = false) {
+      if (this.exposureConfirmation) return
+      if (this.loading || this.checkingBackend || this.loadingDomains || this.loadingNetworks || this.loadingPublicIps || this.checkingName ||
         (this.allowCustomName && this.nameChecked && !this.nameAvailable)) return
       if (!this.proxyDomainId) {
         this.$notification.error({
@@ -398,6 +528,28 @@ export default {
         this.$notification.error({
           message: this.$t('label.proxy.port'),
           description: this.$t('message.proxy.port.invalid')
+        })
+        return
+      }
+      if ('checkInstanceProxyBackend' in this.$store.getters.apis && this.backendHealth?.healthy !== true && confirmed !== true) {
+        const unchecked = !this.backendHealth
+        const request = this.healthRequest
+        const target = this.healthTargetKey
+        this.exposureConfirmation = this.$confirm({
+          centered: true,
+          title: this.$t(unchecked ? 'message.proxy.backend.unchecked.title' : 'message.proxy.backend.confirm.title'),
+          content: this.$t(unchecked ? 'message.proxy.backend.unchecked.description' : 'message.proxy.backend.confirm.description'),
+          okText: this.$t('label.proxy.expose.anyway'),
+          cancelText: this.$t(unchecked ? 'label.proxy.backend.test' : 'label.cancel'),
+          keyboard: !unchecked,
+          onOk: () => {
+            this.exposureConfirmation = null
+            if (request === this.healthRequest && target === this.healthTargetKey) this.submitData(true)
+          },
+          onCancel: () => {
+            this.exposureConfirmation = null
+            if (unchecked && request === this.healthRequest && target === this.healthTargetKey) this.checkBackend()
+          }
         })
         return
       }
@@ -473,6 +625,61 @@ export default {
     padding: 0 4px;
     height: auto;
   }
+  }
+
+  .proxy-backend {
+    &__controls { display: flex; align-items: flex-end; gap: 8px; }
+    &__input { display: flex; align-items: flex-end; flex: 1; min-width: 0; gap: 16px; }
+    &__protocol-field { flex-shrink: 0; }
+    &__port-field { flex: 1; min-width: 65px; }
+    .form__label { display: block; margin-bottom: 5px; }
+    &__protocol {
+      display: flex;
+      flex-shrink: 0;
+
+      :deep(.ant-radio-button-wrapper) {
+        padding: 0 10px;
+        white-space: nowrap;
+
+        .anticon { margin-right: 4px; }
+      }
+    }
+
+    &__port { width: 100%; }
+    &__test {
+      svg { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      > svg { margin-right: 6px; }
+      .anticon svg { stroke: none; }
+    }
+
+    @media (max-width: 480px) {
+      &__controls { flex-wrap: wrap; }
+      &__input { flex-basis: 100%; }
+    }
+  }
+
+  .proxy-health {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid;
+    border-radius: 2px;
+    font-size: 12px;
+
+    &__success { border-color: #a7f3d0; background: #ecfdf5; color: #006d54; }
+    &__error { border-color: #fecaca; background: #fff5f5; color: #b42318; }
+    &--checking { border-color: #e2e8f0; background: #f8fafc; color: #64748b; }
+    &__icon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: rgba(0, 164, 120, 0.12); }
+    &__error &__icon { background: #fee2e2; }
+    &--checking &__icon { background: #e2e8f0; }
+    &__summary { display: flex; align-items: center; flex-wrap: wrap; flex: 1; min-width: 0; gap: 4px 8px; }
+    &__elapsed { font-family: monospace; white-space: nowrap; }
+    &__detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.8; max-width: 100%; font-size: 11px; }
+    &__result { flex-shrink: 0; padding: 3px 7px; border-radius: 2px; background: #d1fae5; font-family: monospace; font-weight: 600; white-space: nowrap; }
+    &__error &__result { background: #fee2e2; }
+    &__warning { color: #ad6800; }
   }
 
   .proxy-name-input {

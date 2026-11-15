@@ -92,6 +92,98 @@ Proxy responses retain the private `ipaddress` and application `port`, and add
 `portforwardingrulemanaged` for isolated networks. The last field is false for
 reused manual rules and true for rules created by the integration.
 
+## Editing an exposure
+
+Use **Edit exposed domain** on an active exposure to change its domain prefix,
+backend HTTP/HTTPS protocol, or private port. The suffix, instance, and network
+remain fixed. The asynchronous `updateInstanceProxy` API accepts `id`, optional
+`name`, `protocol`, `port`, and `generatename`. Omitted values retain the existing
+settings. `generatename=true` requests a new server-generated prefix and cannot
+be combined with `name`. Custom prefixes follow the administrator's custom-name
+policy; backend edits remain available when custom names are disabled.
+
+The same CloudStack exposure UUID and NPM host ID are retained. NPM updates only
+the domain names and changed backend connection settings, preserving certificates
+and other host options. Names are validated and checked for conflicts under the
+existing domain lock, and ownership is checked on both the exposure and instance.
+
+For an isolated network port change, an exclusive integration-managed forwarding
+rule is updated through the networking service. Manual or shared forwarding rules
+are preserved; a separate managed rule on an unused public port is created for
+the edited exposure. A missing rule can also be replaced. The new public port is
+reported in the exposure list. Failed updates attempt to restore the previous
+NPM and forwarding settings and remove any replacement rule. If rollback fails,
+the exposure is marked Error and retains its forwarding reference for cleanup;
+the API identifies the exposure for administrator follow-up.
+
+## Backend health checks
+
+The Expose form labels backend protocol and private port separately, with an optional
+**Test Connection** action, which becomes **Re-test** after a result. Switching
+between HTTP and HTTPS changes default ports 80/443 while preserving custom ports. The management
+server dispatches an asynchronous job through the existing router diagnostics
+channel. The selected network's virtual router sends `GET /` to the instance's
+private IPv4 address and application port. The application sees the router's
+address, not the management server's address. The management server never opens
+an HTTP connection to the application, and there is no fallback to management
+probing. Only HTTP 200 is healthy; redirects are reported without following them.
+
+A compact result row shows checking progress or connection status, elapsed time
+and an HTTP status badge. Hover over failures for the full explanation;
+certificate warnings use a tooltip icon. If the latest
+check failed, clicking OK opens a confirmation with **Expose anyway** and Cancel.
+No exposure is created unless the user explicitly proceeds. Changing connection
+settings, resetting or closing the form clears results and dismisses any pending
+confirmation. If the backend has not been checked with the current settings,
+clicking OK offers **Test Connection** or **Expose anyway**. Testing runs the
+health check without creating an exposure. A successful check needs no warning.
+
+The asynchronous `checkInstanceProxyBackend` API accepts `virtualmachineid`,
+`networkid`, `protocol`, and `port`. Legacy `ipaddressid` and `publicport` parameters
+remain accepted and validated when supplied, but do not affect the probe.
+Instance ownership, network membership, NIC and port validation remain enforced.
+Stopped instances return an unhealthy result. The router must be running and
+attached to the selected network; redundant routers must be PRIMARY, and shared
+network routers must match the instance's pod when it is known. Networks with no
+suitable router return an advisory unavailable result.
+
+Checking creates no forwarding, firewall rule, domain mapping or NPM host. It
+does not modify existing manual or managed forwarding rules, and does not require
+a public IP or NPM credentials. The check tests the application on the private
+network, not public forwarding, public DNS or reachability from NPM/the Internet.
+Normal exposure still creates or reuses forwarding as described above.
+
+The router probe uses Python 3's standard HTTP client without credentials,
+cookies, redirects, proxy environment settings or automatic retries. Connection
+and read timeouts are five seconds; a 15-second total deadline also covers TLS
+and the certificate fallback. Header lines are limited to 8 KiB, with at most 64
+headers, and application bodies are not consumed. Loopback, link-local,
+unspecified and multicast addresses are rejected. HTTPS first verifies the
+certificate and hostname. Certificate verification failures alone allow another
+attempt without verification, with a UI warning. Other TLS failures fail the
+check. The management-to-agent command wait is 30 seconds.
+
+Responses include `healthy`, `httpstatus` (when received), `message`, `checkedat`,
+`elapsedms`, `tlsverified` (when available for HTTPS), and `cleanupcomplete` (true
+because these checks create no resources). Older `rphc-` marked temporary rules
+from management-originated checks remain protected from adoption by normal
+exposure. The existing worker runs every minute, even when the integration is
+disabled, to retry removal of those legacy rules older than five minutes.
+
+### Router script deployment
+
+Deploy the updated reverse proxy plugin/UI and both router files:
+
+- `/opt/cloud/bin/diagnostics.py`
+- `/opt/cloud/bin/check_proxy_backend.py`
+
+Both scripts are included by the normal System VM `cloud-scripts.tgz` packaging
+from `systemvm/debian/`. Existing routers must receive the updated System VM
+scripts through the normal upgrade/patch process before checks work. The existing
+agent diagnostics command is reused; no new agent command is required. Missing
+or outdated scripts produce an advisory unavailable result. Never re-enable
+management-originated HTTP as a compatibility fallback.
+
 ## Cleanup and upgrades
 
 Deleting an exposure, deleting its domain suffix, or expunging its VM removes the
@@ -134,7 +226,7 @@ Run backend tests and their reactor dependencies:
 
 ```sh
 mvn -pl plugins/integrations/reverseproxy -am test \
-  -Dtest='ReverseProxy*Test,NpmClientTest' \
+  -Dtest='ReverseProxy*Test,VirtualRouterBackendProbeTest,NpmClientTest' \
   -Dsurefire.failIfNoSpecifiedTests=false -Ddownload.plugin.skip=true
 ```
 
@@ -148,3 +240,17 @@ Before deployment, use a test CloudStack environment and NPM to verify shared
 and isolated HTTP/HTTPS traffic, VPC forwarding if used, deletion and expunge
 cleanup, and upgrade from an existing database. Unit tests mock network devices
 and do not establish connectivity to an actual virtual router or NPM server.
+
+Run the router probe tests (Python 3 and OpenSSL required):
+
+```sh
+python3 -m unittest discover -s systemvm/test -p test_check_proxy_backend.py -v
+```
+
+For live validation, use a test environment with the updated router scripts.
+Verify shared, isolated and VPC private-backend checks, PRIMARY router selection,
+missing/stopped routers, and trusted/untrusted HTTPS. Check that the application
+sees the router as the request source, that no forwarding/firewall/NPM resources
+are created or changed, and that failed-check confirmation only exposes after
+**Expose anyway**. Java tests mock agent dispatch; Python tests use local HTTP/TLS
+servers rather than a running CloudStack router.

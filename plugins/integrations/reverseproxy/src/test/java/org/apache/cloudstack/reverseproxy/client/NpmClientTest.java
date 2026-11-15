@@ -92,6 +92,23 @@ public class NpmClientTest {
     ///////////////////////////////////////////////////////////
 
     @Test
+    public void testRenameOnlySendsDomainNamesToExistingHost() {
+        wireMockRule.stubFor(com.github.tomakehurst.wiremock.client.WireMock.put(urlEqualTo("/api/nginx/proxy-hosts/99"))
+                .willReturn(aResponse().withStatus(200).withBody("{}")));
+        client.updateProxyHostDomains(99L, List.of("renamed.example.com"));
+        verify(com.github.tomakehurst.wiremock.client.WireMock.putRequestedFor(urlEqualTo("/api/nginx/proxy-hosts/99"))
+                .withHeader("Authorization", equalTo("Bearer jwt-token"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.equalToJson("{\"domain_names\":[\"renamed.example.com\"]}")));
+    }
+
+    @Test
+    public void testRenameRejectsNpmFailure() {
+        wireMockRule.stubFor(com.github.tomakehurst.wiremock.client.WireMock.put(urlEqualTo("/api/nginx/proxy-hosts/99"))
+                .willReturn(aResponse().withStatus(409).withBody("{\"error\":{\"message\":\"Domain already in use\"}}")));
+        org.junit.Assert.assertThrows(ServerApiException.class, () -> client.updateProxyHostDomains(99L, List.of("renamed.example.com")));
+    }
+
+    @Test
     public void testLoginSendsCredentialsAndRequestsCarryBearerToken() {
         wireMockRule.stubFor(get(urlEqualTo("/api/nginx/proxy-hosts"))
                 .willReturn(aResponse()

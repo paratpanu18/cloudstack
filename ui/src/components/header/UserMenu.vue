@@ -235,8 +235,11 @@ export default {
     min-width: 0;
   }
 
-  &-server-info,
-  &-domain-info {
+  &-server-info.action,
+  &-domain-info.action {
+    display: flex;
+    align-items: center;
+    min-width: 0;
     flex-shrink: 1;
     overflow: hidden;
 
@@ -258,6 +261,7 @@ export default {
 
   &-label-text,
   &-domain-text {
+    flex: 1;
     display: block;
     min-width: 0;
     overflow: hidden;

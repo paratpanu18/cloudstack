@@ -36,7 +36,7 @@
         </template>
         <template v-else-if="column.key === 'backend'">
           {{ record.protocol }}://{{ record.ipaddress }}:{{ record.port }}
-          <div v-if="record.publicipaddress">{{ $t('label.port.forwarding') }}: {{ record.publicipaddress }}:{{ record.publicport }}</div>
+          <div v-if="record.publicipaddress">{{ $t('label.portforwarding') }}: {{ record.publicipaddress }}:{{ record.publicport }}</div>
         </template>
         <template v-else-if="column.key === 'virtualmachinename'">
           <router-link v-if="record.virtualmachineid" :to="{ path: '/vm/' + record.virtualmachineid }">{{ text }}</router-link>

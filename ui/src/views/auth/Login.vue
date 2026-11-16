@@ -43,7 +43,14 @@
           v-ctrl-enter="handleSubmit"
         >
           <a-form-item ref="domain" name="domain">
-            <div class="field-label">{{ $t('label.domain') }}</div>
+            <div class="field-label">
+              {{ $t('label.domain') }}
+              <a-tooltip :title="$t('message.login.domain.help')" :trigger="['hover', 'focus', 'click']">
+                <button type="button" class="domain-help" :aria-label="$t('message.login.domain.help')">
+                  <info-circle-outlined />
+                </button>
+              </a-tooltip>
+            </div>
             <a-auto-complete
               class="domain-select"
               v-model:value="form.domain"
@@ -946,6 +953,10 @@ export default {
     }
   }
 
+  :deep(.domain-select .ant-select-selector) {
+    background-color: #fff !important;
+  }
+
   :deep(.domain-select .ant-input-affix-wrapper) {
     border: none !important;
     background: transparent !important;
@@ -1041,6 +1052,22 @@ export default {
     font-size: 14px;
     color: rgba(0, 0, 0, 0.65);
     margin-bottom: 8px;
+  }
+
+  .domain-help {
+    margin-left: 4px;
+    padding: 0 2px;
+    border: 0;
+    background: transparent;
+    color: #595959;
+    cursor: help;
+    line-height: 1;
+
+    &:focus-visible {
+      outline: 2px solid #f6871f;
+      outline-offset: 3px;
+      border-radius: 2px;
+    }
   }
 
   .oauth-login-button {

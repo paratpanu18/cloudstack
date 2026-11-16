@@ -26,7 +26,7 @@
         <menu-unfold-outlined class="trigger" v-if="collapsed" @click="toggle" />
         <menu-fold-outlined class="trigger" v-else @click="toggle" />
       </template>
-      <project-menu />
+      <project-menu class="header-project-menu" />
       <saml-domain-switcher style="margin-left: 20px" />
       <user-menu :device="device"></user-menu>
     </div>
@@ -45,7 +45,7 @@
             <menu-unfold-outlined class="trigger" v-else @click="toggle" />
           </div>
         </div>
-        <project-menu />
+        <project-menu class="header-project-menu" />
         <saml-domain-switcher style="margin-left: 20px" />
         <user-menu></user-menu>
       </div>
@@ -128,6 +128,33 @@ export default {
 </script>
 
 <style lang="less" scoped>
+.header {
+  display: flex;
+  align-items: center;
+
+  > .trigger {
+    flex-shrink: 0;
+  }
+}
+
+.header-project-menu {
+  flex: 0 1 27vw;
+  min-width: 0;
+
+  :deep(.project-select) {
+    width: 100%;
+  }
+}
+
+.header,
+.header-index-wide {
+  > .user-menu {
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-left: auto;
+  }
+}
+
 .ant-layout-header {
   .anticon-menu-fold {
     font-size: 18px;

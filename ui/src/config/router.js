@@ -289,6 +289,13 @@ export function asyncRouterMap () {
     })
   }
 
+  routerMap[0].children.push({
+    path: '/about/',
+    name: 'about',
+    component: shallowRef(IFramePlugin),
+    meta: { title: 'label.about', icon: 'info-circle-outlined', path: `${process.env.BASE_URL}about/index.html` }
+  })
+
   return routerMap
 }
 

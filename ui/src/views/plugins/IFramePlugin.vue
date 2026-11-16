@@ -17,7 +17,7 @@
 
 <template>
   <div>
-    <iframe :src="$route.meta.path" width="100%" frameBorder="0" style="height: 90vh">
+    <iframe :src="$route.meta.path" :title="$t($route.meta.title)" width="100%" frameBorder="0" style="height: 90vh">
     </iframe>
   </div>
 </template>

@@ -16,17 +16,20 @@
 // under the License.
 
 <template>
-  <div>
+  <div class="instance-proxy-tab">
+    <div class="proxy-toolbar">
     <a-button
       v-if="'addInstanceProxy' in $store.getters.apis"
       type="primary"
-      style="width: 100%; margin-bottom: 10px"
       @click="showAddProxyModal">
       <template #icon><global-outlined /></template> {{ $t('label.action.add.instance.proxy') }}
     </a-button>
+    </div>
 
     <a-table
       size="middle"
+      :scroll="{ x: 680 }"
+      tableLayout="fixed"
       :columns="columns"
       :dataSource="proxies"
       :loading="loading"
@@ -34,7 +37,9 @@
       rowKey="id">
       <template #bodyCell="{ column, text, record }">
         <template v-if="column.key === 'fqdn'">
-          <a :href="record.url" target="_blank">{{ text }}</a>
+          <a-tooltip :title="record.created ? `${$t('label.created')}: ${record.created}` : null">
+            <a class="proxy-domain" :href="record.url" target="_blank" rel="noopener noreferrer">{{ text }}</a>
+          </a-tooltip>
           <tooltip-button
             :tooltip="$t('label.copy')"
             icon="copy-outlined"
@@ -44,9 +49,13 @@
         </template>
         <template v-else-if="column.key === 'backend'">
           {{ record.protocol }}://{{ record.ipaddress }}:{{ record.port }}
-          <div v-if="record.publicipaddress">{{ $t('label.port.forwarding') }}: {{ record.publicipaddress }}:{{ record.publicport }}</div>
+          <div v-if="record.publicipaddress" class="proxy-forwarding">{{ $t('label.portforwarding') }}: {{ record.publicipaddress }}:{{ record.publicport }}</div>
+        </template>
+        <template v-else-if="column.key === 'state'">
+          <a-tag :color="record.state === 'Active' ? 'green' : 'default'">{{ text }}</a-tag>
         </template>
         <template v-else-if="column.key === 'actions'">
+          <div class="proxy-actions">
           <tooltip-button
             v-if="'updateInstanceProxy' in $store.getters.apis && record.state === 'Active'"
             :tooltip="$t('label.edit.instance.proxy')"
@@ -66,6 +75,7 @@
               danger
               size="small" />
           </a-popconfirm>
+          </div>
         </template>
       </template>
     </a-table>
@@ -146,17 +156,14 @@ export default {
         {
           key: 'state',
           title: this.$t('label.state'),
-          dataIndex: 'state'
-        },
-        {
-          key: 'created',
-          title: this.$t('label.created'),
-          dataIndex: 'created'
+          dataIndex: 'state',
+          width: 90
         },
         {
           key: 'actions',
           title: this.$t('label.actions'),
-          dataIndex: 'actions'
+          dataIndex: 'actions',
+          width: 95
         }
       ]
     }
@@ -243,3 +250,28 @@ export default {
   }
 }
 </script>
+
+<style lang="less" scoped>
+.proxy-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.proxy-domain {
+  overflow-wrap: anywhere;
+}
+
+.proxy-forwarding {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.65);
+  overflow-wrap: anywhere;
+}
+
+.proxy-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+</style>

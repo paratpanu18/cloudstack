@@ -86,3 +86,30 @@ test('refreshing the key list preserves the deployment selection', () => {
   Selection.watch.loading.call(vm)
   expect(vm.$emit).not.toHaveBeenCalled()
 })
+
+test('delegates GitHub imports to the shared importer', async () => {
+  const vm = context()
+  vm.keyMode = 'github'
+  const importGitHubKeys = jest.fn()
+  vm.$refs = { githubImporter: { importGitHubKeys } }
+  await Selection.methods.addKey.call(vm)
+  expect(importGitHubKeys).toHaveBeenCalled()
+  expect(postAPI).not.toHaveBeenCalled()
+})
+
+test('selects imported GitHub keys alongside existing keys and refreshes results', () => {
+  const vm = context()
+  Selection.methods.handleGitHubImported.call(vm, ['github-user-1', 'github-user-2', 'existing'])
+  expect(vm.$emit).toHaveBeenCalledWith('select-ssh-key-pair-item', [{ name: 'existing' }, { name: 'github-user-1' }, { name: 'github-user-2' }])
+  expect(vm.handleSearch).toHaveBeenCalledWith('')
+  expect(vm.showAddKey).toBe(true)
+})
+
+test('GitHub imports respect selected account and project ownership', () => {
+  const vm = context()
+  expect(Selection.computed.importScope.call(vm)).toEqual({ account: 'owner', domainid: 'domain-1' })
+  vm.owner.projectid = 'owner-project'
+  expect(Selection.computed.importScope.call(vm)).toEqual({ projectid: 'owner-project' })
+  vm.$store.getters.project = { id: 'current-project' }
+  expect(Selection.computed.importScope.call(vm)).toEqual({ projectid: 'current-project' })
+})

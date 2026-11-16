@@ -18,7 +18,7 @@
 <template>
   <div>
     <div class="ssh-toolbar">
-      <a-button v-if="'registerSSHKeyPair' in $store.getters.apis" type="primary" @click="showAddKey = true">
+      <a-button v-if="'registerSSHKeyPair' in $store.getters.apis" type="primary" @click="openAddKey">
         {{ $t('label.add.ssh.key') }}
       </a-button>
       <a-input-search
@@ -29,13 +29,25 @@
     <a-modal
       :visible="showAddKey"
       :title="$t('label.add.ssh.key')"
+      :width="760"
+      :destroyOnClose="true"
       :confirmLoading="savingKey"
       :closable="!savingKey"
       :maskClosable="false"
       :keyboard="!savingKey"
       @ok="addKey"
       @cancel="showAddKey = false">
-      <a-form layout="vertical">
+      <a-radio-group v-model:value="keyMode" :disabled="savingKey" class="ssh-key-mode">
+        <a-radio-button value="manual">{{ $t('label.publickey') }}</a-radio-button>
+        <a-radio-button value="github"><github-outlined /> {{ $t('label.ssh.github') }}</a-radio-button>
+      </a-radio-group>
+      <GitHubSSHKeyImport
+        v-if="showAddKey && keyMode === 'github'"
+        ref="githubImporter"
+        :scope="importScope"
+        @loading="value => { savingKey = value }"
+        @imported="handleGitHubImported" />
+      <a-form v-else layout="vertical">
         <a-form-item :label="$t('label.name')" required>
           <a-input v-model:value="keyName" :disabled="savingKey" />
         </a-form-item>
@@ -79,9 +91,11 @@
 
 <script>
 import { postAPI } from '@/api'
+import GitHubSSHKeyImport from '@/components/widgets/GitHubSSHKeyImport'
 
 export default {
   name: 'SshKeyPairSelection',
+  components: { GitHubSSHKeyImport },
   props: {
     owner: {
       type: Object,
@@ -117,6 +131,7 @@ export default {
       filter: '',
       showAddKey: false,
       savingKey: false,
+      keyMode: 'manual',
       keyName: '',
       publicKey: '',
       columns: [
@@ -147,6 +162,14 @@ export default {
     }
   },
   computed: {
+    importScope () {
+      const projectid = this.$store.getters.project?.id || this.owner.projectid
+      if (projectid) return { projectid }
+      const scope = {}
+      if (this.owner.account) scope.account = this.owner.account
+      if (this.owner.domainid) scope.domainid = this.owner.domainid
+      return scope
+    },
     rowSelection () {
       return {
         type: 'checkbox',
@@ -174,8 +197,17 @@ export default {
     }
   },
   methods: {
+    openAddKey () {
+      this.keyMode = 'manual'
+      this.showAddKey = true
+    },
+    handleGitHubImported (names) {
+      this.$emit('select-ssh-key-pair-item', [...new Set([...this.value, ...names])].map(name => ({ name })))
+      this.handleSearch('')
+    },
     async addKey () {
       if (this.savingKey) return
+      if (this.keyMode === 'github') return this.$refs.githubImporter.importGitHubKeys()
       if (!this.keyName.trim() || !this.publicKey.trim()) {
         this.$message.error(this.$t('message.ssh.key.required'))
         return
@@ -225,6 +257,8 @@ export default {
 </script>
 
 <style lang="less" scoped>
+  .ssh-key-mode { margin-bottom: 16px; }
+
   .ssh-toolbar {
     display: flex;
     flex-wrap: wrap;

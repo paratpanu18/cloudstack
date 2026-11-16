@@ -4291,5 +4291,19 @@
   "message.success.update.announcement": "Successfully updated announcement",
   "message.confirm.enable.announcement": "Are you sure you want to enable this announcement?",
   "message.confirm.disable.announcement": "Are you sure you want to disable this announcement?",
-  "message.confirm.delete.announcement": "Are you sure you want to delete this announcement?"
+  "message.confirm.delete.announcement": "Are you sure you want to delete this announcement?",
+  "message.ssh.generate.if.empty": "Leave blank to generate a new key pair.",
+  "label.ssh.manual": "Generate / paste key",
+  "label.ssh.github": "Import from GitHub",
+  "label.ssh.github.username": "GitHub username",
+  "label.ssh.github.fetch": "Fetch keys",
+  "label.ssh.github.hostname": "Hostname / label",
+  "message.ssh.github.empty": "This GitHub user has no public SSH keys.",
+  "message.ssh.github.username": "Enter a valid GitHub username.",
+  "message.ssh.github.notfound": "GitHub user not found.",
+  "message.ssh.github.ratelimit": "GitHub refused the request or its rate limit was reached. Try again later.",
+  "message.ssh.github.fetch": "Unable to fetch GitHub keys. Check your connection and try again.",
+  "message.ssh.github.selection": "Select at least one key and give each selected key a nonempty, unique label.",
+  "message.ssh.github.imported": "Imported successfully.",
+  "message.ssh.github.importerror": "Unable to import this key. Try again."
 }

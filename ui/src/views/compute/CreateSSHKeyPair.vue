@@ -18,7 +18,6 @@
 <template>
   <div class="form-layout">
     <a-spin :spinning="loading" v-if="!isSubmitted">
-      <p v-html="$t('message.desc.create.ssh.key.pair')"></p>
       <a-form
         v-ctrl-enter="handleSubmit"
         :ref="formRef"
@@ -26,27 +25,31 @@
         :rules="rules"
         @finish="handleSubmit"
         layout="vertical">
-        <a-form-item name="name" ref="name">
-          <template #label>
-            <tooltip-label :title="$t('label.name')" :tooltip="apiParams.name.description"/>
-          </template>
+        <a-radio-group v-model:value="mode" :disabled="loading" class="ssh-mode">
+          <a-radio-button value="manual">{{ $t('label.ssh.manual') }}</a-radio-button>
+          <a-radio-button v-if="canImport" value="github"><github-outlined /> {{ $t('label.ssh.github') }}</a-radio-button>
+        </a-radio-group>
+        <GitHubSSHKeyImport
+          v-if="mode === 'github'"
+          ref="githubImporter"
+          :scope="importScope"
+          @loading="value => { loading = value }"
+          @imported="$emit('refresh-data')" />
+        <a-form-item v-if="mode === 'manual'" name="name" ref="name" :label="$t('label.name')">
           <a-input
             v-model:value="form.name"
-            :placeholder="apiParams.name.description"
+            :placeholder="$t('label.name')"
+            :disabled="loading"
             v-focus="true" />
         </a-form-item>
-        <a-form-item name="publickey" ref="publickey">
-          <template #label>
-            <tooltip-label :title="$t('label.publickey')" :tooltip="apiParams.publickey.description"/>
-          </template>
-          <a-input
+        <a-form-item v-if="mode === 'manual'" name="publickey" ref="publickey" :label="$t('label.publickey')" :extra="$t('message.ssh.generate.if.empty')">
+          <a-textarea
             v-model:value="form.publickey"
-            :placeholder="apiParams.publickey.description"/>
+            :rows="4"
+            :disabled="loading"
+            placeholder="ssh-ed25519 AAAA…" />
         </a-form-item>
-        <a-form-item name="domainid" ref="domainid" v-if="isAdminOrDomainAdmin()">
-          <template #label>
-            <tooltip-label :title="$t('label.domainid')" :tooltip="apiParams.domainid.description"/>
-          </template>
+        <a-form-item name="domainid" ref="domainid" v-if="isAdminOrDomainAdmin()" :label="$t('label.domainid')">
           <a-select
             id="domain-selection"
             v-model:value="form.domainid"
@@ -56,27 +59,21 @@
               return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
             }"
             :loading="domainLoading"
-            :placeholder="apiParams.domainid.description"
+            :disabled="loading"
             @change="val => { handleDomainChanged(domains[val]) }">
             <a-select-option v-for="(opt, optIndex) in domains" :key="optIndex" :label=" opt.path || opt.name || opt.description || ''">
               {{ opt.path || opt.name || opt.description }}
             </a-select-option>
           </a-select>
         </a-form-item>
-        <a-form-item name="account" ref="account" v-if="isAdminOrDomainAdmin() && !isObjectEmpty(selectedDomain) && selectedDomain.id !== null">
-          <template #label :title="apiParams.account.description">
-            {{ $t('label.account') }}
-            <a-tooltip>
-              <info-circle-outlined style="color: rgba(0,0,0,.45)" />
-            </a-tooltip>
-          </template>
+        <a-form-item name="account" ref="account" v-if="isAdminOrDomainAdmin() && !isObjectEmpty(selectedDomain) && selectedDomain.id !== null" :label="$t('label.account')">
           <a-input
             v-model:value="form.account"
-            :placeholder="apiParams.account.description"/>
+            :disabled="loading"/>
         </a-form-item>
 
         <div :span="24" class="action-button">
-          <a-button @click="closeAction">{{ $t('label.cancel') }}</a-button>
+          <a-button :disabled="loading" @click="closeAction">{{ $t('label.cancel') }}</a-button>
           <a-button :loading="loading" ref="submit" type="primary" @click="handleSubmit">{{ $t('label.ok') }}</a-button>
         </div>
       </a-form>
@@ -96,17 +93,18 @@
 import { ref, reactive, toRaw } from 'vue'
 import { getAPI, postAPI } from '@/api'
 import { mixinForm } from '@/utils/mixin'
-import TooltipLabel from '@/components/widgets/TooltipLabel'
+import GitHubSSHKeyImport from '@/components/widgets/GitHubSSHKeyImport'
 
 export default {
   name: 'CreateSSHKeyPair',
   mixins: [mixinForm],
   props: {},
   components: {
-    TooltipLabel
+    GitHubSSHKeyImport
   },
   data () {
     return {
+      mode: 'manual',
       domains: [],
       domainLoading: false,
       selectedDomain: {},
@@ -115,8 +113,17 @@ export default {
       hiddenElement: null
     }
   },
-  beforeCreate () {
-    this.apiParams = this.$getApiParams('createSSHKeyPair', 'registerSSHKeyPair')
+  computed: {
+    canImport () {
+      return 'registerSSHKeyPair' in this.$store.getters.apis
+    },
+    importScope () {
+      const scope = {}
+      const domain = this.domains[this.form.domainid]
+      if (domain?.id) scope.domainid = domain.id
+      if (this.form.account) scope.account = this.form.account
+      return scope
+    }
   },
   created () {
     this.initForm()
@@ -171,8 +178,9 @@ export default {
       this.selectedDomain = domain
     },
     handleSubmit (e) {
-      e.preventDefault()
+      if (e) e.preventDefault()
       if (this.loading) return
+      if (this.mode === 'github') return this.$refs.githubImporter.importGitHubKeys()
       this.formRef.value.validate().then(() => {
         const formRaw = toRaw(this.form)
         const values = this.handleRemoveFields(formRaw)
@@ -238,11 +246,10 @@ export default {
 </script>
 
 <style scoped lang="less">
+  .ssh-mode { margin-bottom: 16px; }
   .form-layout {
-    width: 80vw;
-
-    @media (min-width: 600px) {
-      width: 450px;
-    }
+    // The action modal adds 24px padding on each side: 712px + 48px = 760px.
+    width: 712px;
+    max-width: calc(100vw - 80px);
   }
 </style>

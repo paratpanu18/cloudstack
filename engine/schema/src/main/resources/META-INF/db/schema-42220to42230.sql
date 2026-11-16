@@ -45,7 +45,7 @@ CREATE TABLE `cloud`.`announcement` (
 SET @reverseproxy_ownership_ddl = (
   SELECT IF(COUNT(*) > 0 AND SUM(COLUMN_NAME = 'port_forwarding_rule_managed') = 0,
     'ALTER TABLE cloud.reverse_proxy_host ADD COLUMN port_forwarding_rule_managed TINYINT(1) NOT NULL DEFAULT 1',
-    'SELECT 1')
+    'SET @reverseproxy_noop = 0')
   FROM INFORMATION_SCHEMA.COLUMNS
   WHERE TABLE_SCHEMA = 'cloud' AND TABLE_NAME = 'reverse_proxy_host'
 );

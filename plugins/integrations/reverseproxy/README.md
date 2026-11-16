@@ -210,6 +210,11 @@ for installations already recorded as 4.22.3.0. It preserves existing values and
 skips databases without the optional reverse proxy host table. No manual column
 addition is needed when upgrading to this version.
 
+An installation already recorded as 4.23.0.0 does not rerun that upgrade.
+Before deploying this feature there, check `cloud.reverse_proxy_host` and add
+any missing columns with the definitions in the 4.23 upgrade script. Back up
+the database first; do not change or recreate existing mappings.
+
 The deprecated `reverseproxy.domain` setting is no longer required when domain
 suffixes have been configured using the domain management APIs.
 

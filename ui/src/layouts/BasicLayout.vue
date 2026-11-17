@@ -16,7 +16,8 @@
 // under the License.
 
 <template>
-  <global-layout>
+  <route-view v-if="$route.meta.fullscreen" />
+  <global-layout v-else>
     <multi-tab v-if="$store.getters.multiTab"></multi-tab>
     <transition name="page-transition">
       <route-view />

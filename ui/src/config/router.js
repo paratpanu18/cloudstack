@@ -20,6 +20,7 @@ import { UserLayout, BasicLayout, RouteView } from '@/layouts'
 import AutogenView from '@/views/AutogenView.vue'
 import IFramePlugin from '@/views/plugins/IFramePlugin.vue'
 import ApiDocsPlugin from '@/views/plugins/ApiDocsPlugin.vue'
+import AboutPlugin from '@/views/plugins/AboutPlugin.vue'
 
 import { shallowRef } from 'vue'
 import { vueProps } from '@/vue-app'
@@ -292,8 +293,8 @@ export function asyncRouterMap () {
   routerMap[0].children.push({
     path: '/about/',
     name: 'about',
-    component: shallowRef(IFramePlugin),
-    meta: { title: 'label.about', icon: 'info-circle-outlined', path: `${process.env.BASE_URL}about/index.html` }
+    component: shallowRef(AboutPlugin),
+    meta: { fullscreen: true, title: 'label.about', icon: 'info-circle-outlined', path: `${process.env.BASE_URL}about/index.html` }
   })
 
   return routerMap

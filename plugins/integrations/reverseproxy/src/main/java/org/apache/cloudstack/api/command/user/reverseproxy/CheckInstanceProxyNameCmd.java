@@ -60,6 +60,13 @@ public class CheckInstanceProxyNameCmd extends BaseCmd {
             description = "The instance to expose, used to validate network grants")
     private Long virtualMachineId;
 
+    @Parameter(name = "loadbalancerruleid", type = CommandType.UUID,
+            entityType = org.apache.cloudstack.api.response.FirewallRuleResponse.class,
+            description = "The public load balancer rule; cannot be combined with virtualmachineid")
+    private Long loadBalancerRuleId;
+
+    public Long getLoadBalancerRuleId() { return loadBalancerRuleId; }
+
     public Long getVirtualMachineId() {
         return virtualMachineId;
     }

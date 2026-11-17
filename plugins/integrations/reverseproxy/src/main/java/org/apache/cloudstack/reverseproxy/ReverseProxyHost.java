@@ -30,6 +30,8 @@ public interface ReverseProxyHost extends ControlledEntity, Identity, InternalId
 
     long getVmInstanceId();
 
+    default Long getLoadBalancerRuleId() { return null; }
+
     long getNetworkId();
 
     String getIpAddress();

@@ -29,12 +29,16 @@ import com.cloud.utils.db.SearchCriteria;
 @Component
 public class ReverseProxyHostDaoImpl extends GenericDaoBase<ReverseProxyHostVO, Long> implements ReverseProxyHostDao {
 
+    private final SearchBuilder<ReverseProxyHostVO> LoadBalancerSearch;
     private final SearchBuilder<ReverseProxyHostVO> FqdnSearch;
     private final SearchBuilder<ReverseProxyHostVO> VmIdSearch;
     private final SearchBuilder<ReverseProxyHostVO> DomainIdSearch;
     private final SearchBuilder<ReverseProxyHostVO> ForwardingRuleIdSearch;
 
     public ReverseProxyHostDaoImpl() {
+        LoadBalancerSearch = createSearchBuilder();
+        LoadBalancerSearch.and("loadBalancerRuleId", LoadBalancerSearch.entity().getLoadBalancerRuleId(), SearchCriteria.Op.EQ);
+        LoadBalancerSearch.done();
         FqdnSearch = createSearchBuilder();
         FqdnSearch.and("fqdn", FqdnSearch.entity().getFqdn(), SearchCriteria.Op.EQ);
         FqdnSearch.done();
@@ -50,6 +54,13 @@ public class ReverseProxyHostDaoImpl extends GenericDaoBase<ReverseProxyHostVO, 
         ForwardingRuleIdSearch = createSearchBuilder();
         ForwardingRuleIdSearch.and("forwardingRuleId", ForwardingRuleIdSearch.entity().getPortForwardingRuleId(), SearchCriteria.Op.EQ);
         ForwardingRuleIdSearch.done();
+    }
+
+    @Override
+    public List<ReverseProxyHostVO> listByLoadBalancerRuleId(final long id) {
+        final SearchCriteria<ReverseProxyHostVO> sc = LoadBalancerSearch.create();
+        sc.setParameters("loadBalancerRuleId", id);
+        return listBy(sc);
     }
 
     @Override

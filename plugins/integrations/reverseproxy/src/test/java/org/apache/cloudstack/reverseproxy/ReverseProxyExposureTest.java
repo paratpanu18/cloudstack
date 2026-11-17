@@ -86,6 +86,8 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.doAnswer;
 
 public class ReverseProxyExposureTest {
+    private final com.cloud.network.dao.LoadBalancerDao loadBalancers = mock(com.cloud.network.dao.LoadBalancerDao.class);
+    private final com.cloud.network.dao.LoadBalancerVO loadBalancer = mock(com.cloud.network.dao.LoadBalancerVO.class);
     private final NpmClient client = mock(NpmClient.class);
     private final ReverseProxyHostDao hosts = mock(ReverseProxyHostDao.class);
     private final ReverseProxyDomainDao domains = mock(ReverseProxyDomainDao.class);
@@ -142,6 +144,9 @@ public class ReverseProxyExposureTest {
         protected long resolveCertificateId(NpmClient npm, ReverseProxyDomainVO suffix) { return 1; }
 
         @Override
+        protected <T> T withLoadBalancerLock(Long id, Supplier<T> operation) { return operation.get(); }
+
+        @Override
         protected <T> T withDomainLock(Long domainId, Supplier<T> operation) { return operation.get(); }
 
         @Override
@@ -178,6 +183,7 @@ public class ReverseProxyExposureTest {
         probeResult.setCleanupComplete(true);
         probeResult.setCheckedAt(new Date());
         inject("reverseProxyHostDao", hosts);
+        inject("loadBalancerDao", loadBalancers);
         inject("reverseProxyDomainDao", domains);
         inject("reverseProxyDomainMapDao", grants);
         inject("networkDao", networks);
@@ -861,6 +867,7 @@ public class ReverseProxyExposureTest {
     public void domainListingRejectsForeignVmBeforeCheckingNetworkGrants() {
         doThrow(new PermissionDeniedException("not owned")).when(accounts).checkAccess(eq(caller), any(), eq(false), eq(vm));
         ListReverseProxyDomainsCmd cmd = mock(ListReverseProxyDomainsCmd.class);
+        when(cmd.getLoadBalancerRuleId()).thenReturn(null);
         when(cmd.getVirtualMachineId()).thenReturn(10L);
         assertThrows(PermissionDeniedException.class, () -> manager.listReverseProxyDomains(cmd));
         verifyNoInteractions(grants);
@@ -870,6 +877,7 @@ public class ReverseProxyExposureTest {
     public void staleSharedNetworkSettingDoesNotPreventSelectingAnIsolatedNetwork() {
         manager.defaultNetworkUnavailable = true;
         ListReverseProxyDomainsCmd cmd = mock(ListReverseProxyDomainsCmd.class);
+        when(cmd.getLoadBalancerRuleId()).thenReturn(null);
         when(cmd.getVirtualMachineId()).thenReturn(10L);
         when(cmd.getId()).thenReturn(null);
         assertEquals(1, manager.listReverseProxyDomains(cmd).getResponses().size());
@@ -1132,6 +1140,7 @@ public class ReverseProxyExposureTest {
         when(domain.isPublic()).thenReturn(false);
         when(grants.findByDomainAndNetwork(30L, 100L)).thenReturn(new ReverseProxyDomainMapVO(30L, null, 100L));
         CheckInstanceProxyNameCmd cmd = mock(CheckInstanceProxyNameCmd.class);
+        when(cmd.getLoadBalancerRuleId()).thenReturn(null);
         when(cmd.getVirtualMachineId()).thenReturn(10L);
         assertTrue(manager.checkInstanceProxyName("app", 30L, cmd).getAvailable());
         verify(accounts).checkAccess(eq(caller), any(), eq(false), eq(vm));
@@ -1145,5 +1154,108 @@ public class ReverseProxyExposureTest {
         expose("app");
         verify(rules).createPortForwardingRule(any(), eq(10L), isNull(), eq(false), eq(true));
         verify(firewall, never()).applyIngressFirewallRules(anyLong(), any());
+    }
+
+    private void prepareLoadBalancer() {
+        when(loadBalancers.findById(700L)).thenReturn(loadBalancer);
+        when(loadBalancer.getId()).thenReturn(700L);
+        when(loadBalancer.getAccountId()).thenReturn(20L);
+        when(loadBalancer.getDomainId()).thenReturn(1L);
+        when(loadBalancer.getNetworkId()).thenReturn(100L);
+        when(loadBalancer.getSourceIpAddressId()).thenReturn(200L);
+        when(loadBalancer.getState()).thenReturn(FirewallRule.State.Active);
+        when(loadBalancer.getProtocol()).thenReturn("tcp");
+        when(loadBalancer.getLbProtocol()).thenReturn("tcp");
+        when(loadBalancer.getSourcePortStart()).thenReturn(8080);
+        when(ip.getId()).thenReturn(200L);
+    }
+
+    @Test
+    public void publishesLoadBalancerWithoutCreatingForwardingRules() {
+        prepareLoadBalancer();
+        ReverseProxyHost proxy = manager.createLoadBalancerProxy(700L, "balanced", "http", 30L);
+        assertEquals(Long.valueOf(700L), proxy.getLoadBalancerRuleId());
+        assertEquals(0L, proxy.getVmInstanceId());
+        assertNull(proxy.getPortForwardingRuleId());
+        assertFalse(proxy.isPortForwardingRuleManaged());
+        ArgumentCaptor<NpmProxyHost> request = ArgumentCaptor.forClass(NpmProxyHost.class);
+        verify(client).createProxyHost(request.capture());
+        assertEquals("203.0.113.10", request.getValue().getForwardHost());
+        assertEquals(Integer.valueOf(8080), request.getValue().getForwardPort());
+        verifyNoInteractions(rules, firewall);
+    }
+
+    @Test
+    public void loadBalancerDomainGrantsUseItsNetwork() {
+        prepareLoadBalancer();
+        when(domain.isPublic()).thenReturn(false);
+        assertThrows(InvalidParameterValueException.class, () -> manager.createLoadBalancerProxy(700L, "blocked", "http", 30L));
+        when(grants.findByDomainAndNetwork(30L, 100L)).thenReturn(new ReverseProxyDomainMapVO(30L, null, 100L));
+        assertEquals(ReverseProxyHost.State.Active, manager.createLoadBalancerProxy(700L, "allowed", "http", 30L).getState());
+    }
+
+    @Test
+    public void rejectsInactiveAndUdpLoadBalancers() {
+        prepareLoadBalancer();
+        when(loadBalancer.getState()).thenReturn(FirewallRule.State.Add);
+        assertThrows(InvalidParameterValueException.class, () -> manager.createLoadBalancerProxy(700L, "pending", "http", 30L));
+        when(loadBalancer.getState()).thenReturn(FirewallRule.State.Active);
+        when(loadBalancer.getLbProtocol()).thenReturn("udp");
+        assertThrows(InvalidParameterValueException.class, () -> manager.createLoadBalancerProxy(700L, "udp", "http", 30L));
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    public void loadBalancerDeletionGuardIncludesFailedMappings() {
+        ReverseProxyHostVO proxy = new ReverseProxyHostVO();
+        proxy.setState(ReverseProxyHost.State.Error);
+        when(hosts.listByLoadBalancerRuleId(700L)).thenReturn(List.of(proxy));
+        assertThrows(InvalidParameterValueException.class, () -> manager.checkLoadBalancerDependency(700L));
+    }
+
+    @Test
+    public void failedLoadBalancerPublicationLeavesNativeRulesUntouched() {
+        prepareLoadBalancer();
+        when(client.createProxyHost(any())).thenThrow(new CloudRuntimeException("NPM unavailable"));
+        assertThrows(CloudRuntimeException.class, () -> manager.createLoadBalancerProxy(700L, "failed", "http", 30L));
+        verifyNoInteractions(rules, firewall);
+        verify(hosts).remove(1L);
+    }
+
+    @Test
+    public void editsLoadBalancerSchemeWithoutChangingItsNativePort() {
+        prepareLoadBalancer();
+        ReverseProxyHost proxy = manager.createLoadBalancerProxy(700L, "balanced", "http", 30L);
+        NpmProxyHost host = new NpmProxyHost();
+        host.setId(99L);
+        host.setDomainNames(List.of(proxy.getFqdn()));
+        host.setForwardHost("203.0.113.10");
+        host.setForwardPort(8080);
+        host.setForwardScheme("http");
+        host.setMeta(Map.of("cloudstack_instance_proxy_uuid", proxy.getUuid()));
+        when(client.findProxyHostByDomain(proxy.getFqdn())).thenReturn(host);
+        ReverseProxyHost updated = manager.updateInstanceProxy(1L, "balanced", "https", Integer.valueOf(8080), false);
+        assertEquals("https", updated.getForwardScheme());
+        assertEquals(8080, updated.getForwardPort());
+        verifyNoInteractions(rules, firewall);
+        assertThrows(InvalidParameterValueException.class, () -> manager.updateInstanceProxy(1L, "balanced", "https", 8081, false));
+    }
+
+    @Test
+    public void deletingLoadBalancerDomainRetainsNativeRules() {
+        prepareLoadBalancer();
+        manager.createLoadBalancerProxy(700L, "balanced", "http", 30L);
+        manager.deleteInstanceProxy(1L);
+        verify(client).deleteProxyHost(99L);
+        verifyNoInteractions(rules, firewall);
+        assertNull(stored.get());
+    }
+
+    @Test
+    public void foreignLoadBalancerCannotBePublished() {
+        prepareLoadBalancer();
+        doThrow(new PermissionDeniedException("not owned")).when(accounts).checkAccess(eq(caller), any(), eq(false), eq(loadBalancer));
+        assertThrows(PermissionDeniedException.class, () -> manager.createLoadBalancerProxy(700L, "foreign", "http", 30L));
+        verifyNoInteractions(client, rules, firewall);
     }
 }

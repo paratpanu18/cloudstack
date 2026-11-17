@@ -49,8 +49,11 @@ public class ReverseProxyHostVO implements ReverseProxyHost {
     @Column(name = "fqdn", nullable = false)
     private String fqdn;
 
-    @Column(name = "vm_instance_id", nullable = false)
-    private long vmInstanceId;
+    @Column(name = "vm_instance_id")
+    private Long vmInstanceId;
+
+    @Column(name = "load_balancer_rule_id")
+    private Long loadBalancerRuleId;
 
     @Column(name = "network_id", nullable = false)
     private long networkId;
@@ -138,8 +141,12 @@ public class ReverseProxyHostVO implements ReverseProxyHost {
 
     @Override
     public long getVmInstanceId() {
-        return vmInstanceId;
+        return vmInstanceId == null ? 0 : vmInstanceId;
     }
+
+    public Long getLoadBalancerRuleId() { return loadBalancerRuleId; }
+
+    public void setLoadBalancerRuleId(Long id) { loadBalancerRuleId = id; }
 
     public void setVmInstanceId(long vmInstanceId) {
         this.vmInstanceId = vmInstanceId;

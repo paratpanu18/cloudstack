@@ -56,6 +56,13 @@ public class ListInstanceProxiesCmd extends BaseListProjectAndAccountResourcesCm
             description = "The ID of the instance to list the proxies for")
     private Long virtualMachineId;
 
+    @Parameter(name = "loadbalancerruleid", type = CommandType.UUID,
+            entityType = org.apache.cloudstack.api.response.FirewallRuleResponse.class,
+            description = "The public load balancer rule; cannot be combined with virtualmachineid")
+    private Long loadBalancerRuleId;
+
+    public Long getLoadBalancerRuleId() { return loadBalancerRuleId; }
+
     /////////////////////////////////////////////////////
     /////////////////// Accessors ///////////////////////
     /////////////////////////////////////////////////////

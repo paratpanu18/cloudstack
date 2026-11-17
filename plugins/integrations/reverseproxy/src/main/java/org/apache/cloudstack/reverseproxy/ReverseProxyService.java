@@ -108,6 +108,8 @@ public interface ReverseProxyService extends PluggableService {
      */
     void deleteInstanceProxy(Long proxyId);
 
+    ReverseProxyHost createLoadBalancerProxy(Long loadBalancerId, String name, String protocol, Long domainId);
+
     /** Updates an existing exposure while preserving its identity and NPM host. */
     ReverseProxyHost updateInstanceProxy(Long proxyId, String name, String protocol, Integer port, Boolean generateName);
 

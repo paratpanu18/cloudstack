@@ -254,3 +254,25 @@ sees the router as the request source, that no forwarding/firewall/NPM resources
 are created or changed, and that failed-check confirmation only exposes after
 **Expose anyway**. Java tests mock agent dispatch; Python tests use local HTTP/TLS
 servers rather than a running CloudStack router.
+
+## Publish a load-balanced web address
+
+To publish an existing active public TCP load balancer, call `addInstanceProxy`
+with `loadbalancerruleid`, `domainid`, `protocol=http|https`, and optional `name`.
+Do not send `virtualmachineid`, `networkid`, `port`, `ipaddressid`, or `publicport`:
+the endpoint is derived from the load balancer. The listener must serve HTTP or
+HTTPS and allow NPM to connect. Internal load balancers are not supported.
+
+Domain listing and name checking accept `loadbalancerruleid` to enforce network
+grants against that target. User and administrator proxy listings accept the
+same filter. Responses add `targettype=INSTANCE|LOAD_BALANCER`,
+`loadbalancerruleid`, and `loadbalancername`; existing instance response fields
+remain compatible. Updating a load-balanced web address may change its name and
+HTTP/HTTPS scheme; its port remains fixed by the native load-balancer rule.
+
+Deleting a load-balanced web address removes only its NPM mapping. Native
+load-balancer deletion or listener-protocol changes are blocked while any domain
+mapping references it, including mappings awaiting error cleanup. Membership
+changes remain available. Apply the 4.22.2 to 4.22.3 schema upgrade before running
+the updated plugin; the nullable VM reference and indexed load-balancer reference
+are added without changing existing instance mappings.

@@ -262,6 +262,9 @@ public class LoadBalancingRulesManagerImpl<Type> extends ManagerBase implements 
     @Inject
     UserDao _userDao;
     List<LoadBalancingServiceProvider> _lbProviders;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private List<LoadBalancerDependencyGuard> dependencyGuards = new ArrayList<>();
     @Inject
     ApplicationLoadBalancerRuleDao _appLbRuleDao;
     @Inject
@@ -1571,6 +1574,17 @@ public class LoadBalancingRulesManagerImpl<Type> extends ManagerBase implements 
 
     @DB
     public boolean deleteLoadBalancerRule(final long loadBalancerId, boolean apply, Account caller, long callerUserId, boolean rollBack) {
+        if (dependencyGuards.isEmpty()) return deleteLoadBalancerRuleLocked(loadBalancerId, apply, caller, callerUserId, rollBack);
+        final com.cloud.utils.db.GlobalLock lock = com.cloud.utils.db.GlobalLock.getInternLock("loadbalancer.endpoint." + loadBalancerId);
+        try {
+            if (!lock.lock(30)) throw new CloudRuntimeException("Load balancer endpoint is busy; retry later");
+            try { return deleteLoadBalancerRuleLocked(loadBalancerId, apply, caller, callerUserId, rollBack); }
+            finally { lock.unlock(); }
+        } finally { lock.releaseRef(); }
+    }
+
+    private boolean deleteLoadBalancerRuleLocked(final long loadBalancerId, boolean apply, Account caller, long callerUserId, boolean rollBack) {
+        dependencyGuards.forEach(guard -> guard.checkLoadBalancerDependency(loadBalancerId));
         List<AutoScaleVmGroupVO> vmGroups = _autoScaleVmGroupDao.listByLoadBalancer(loadBalancerId);
         if (CollectionUtils.isNotEmpty(vmGroups)) {
             throw new CloudRuntimeException(String.format("Cannot delete load balancer rule %d because it is being used by %s Autoscale VM group.", loadBalancerId, vmGroups.size()));
@@ -2225,6 +2239,16 @@ public class LoadBalancingRulesManagerImpl<Type> extends ManagerBase implements 
     @Override
     @ActionEvent(eventType = EventTypes.EVENT_LOAD_BALANCER_UPDATE, eventDescription = "updating load balancer", async = true)
     public LoadBalancer updateLoadBalancerRule(UpdateLoadBalancerRuleCmd cmd) {
+        if (dependencyGuards.isEmpty()) return updateLoadBalancerRuleLocked(cmd);
+        final com.cloud.utils.db.GlobalLock lock = com.cloud.utils.db.GlobalLock.getInternLock("loadbalancer.endpoint." + cmd.getId());
+        try {
+            if (!lock.lock(30)) throw new CloudRuntimeException("Load balancer endpoint is busy; retry later");
+            try { return updateLoadBalancerRuleLocked(cmd); }
+            finally { lock.unlock(); }
+        } finally { lock.releaseRef(); }
+    }
+
+    private LoadBalancer updateLoadBalancerRuleLocked(UpdateLoadBalancerRuleCmd cmd) {
         Account caller = CallContext.current().getCallingAccount();
         Long lbRuleId = cmd.getId();
         String name = cmd.getLoadBalancerName();
@@ -2264,6 +2288,7 @@ public class LoadBalancingRulesManagerImpl<Type> extends ManagerBase implements 
         }
 
         if (StringUtils.isNotBlank(lbProtocol)) {
+            if (!dependencyGuards.isEmpty() && !lbProtocol.equalsIgnoreCase(lb.getLbProtocol())) dependencyGuards.forEach(guard -> guard.checkLoadBalancerDependency(lbRuleId));
             lb.setLbProtocol(lbProtocol);
         }
 

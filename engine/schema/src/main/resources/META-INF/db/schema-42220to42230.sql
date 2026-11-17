@@ -52,3 +52,23 @@ SET @reverseproxy_ownership_ddl = (
 PREPARE reverseproxy_ownership_stmt FROM @reverseproxy_ownership_ddl;
 EXECUTE reverseproxy_ownership_stmt;
 DEALLOCATE PREPARE reverseproxy_ownership_stmt;
+
+-- Reverse proxy targets can reference an instance or a public load balancer.
+SET @reverseproxy_target_ddl = (
+  SELECT IF(COUNT(*) > 0,
+    'ALTER TABLE cloud.reverse_proxy_host MODIFY COLUMN vm_instance_id BIGINT UNSIGNED NULL', 'SELECT 1')
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = 'cloud' AND TABLE_NAME = 'reverse_proxy_host' AND COLUMN_NAME = 'vm_instance_id'
+);
+PREPARE reverseproxy_target_stmt FROM @reverseproxy_target_ddl;
+EXECUTE reverseproxy_target_stmt;
+DEALLOCATE PREPARE reverseproxy_target_stmt;
+SET @reverseproxy_lb_ddl = (
+  SELECT IF(COUNT(*) > 0 AND SUM(COLUMN_NAME = 'load_balancer_rule_id') = 0,
+    'ALTER TABLE cloud.reverse_proxy_host ADD COLUMN load_balancer_rule_id BIGINT UNSIGNED DEFAULT NULL, ADD INDEX i_reverse_proxy_host_lb (load_balancer_rule_id)',
+    'SELECT 1')
+  FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'cloud' AND TABLE_NAME = 'reverse_proxy_host'
+);
+PREPARE reverseproxy_lb_stmt FROM @reverseproxy_lb_ddl;
+EXECUTE reverseproxy_lb_stmt;
+DEALLOCATE PREPARE reverseproxy_lb_stmt;

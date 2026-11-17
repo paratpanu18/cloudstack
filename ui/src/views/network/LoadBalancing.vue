@@ -174,21 +174,26 @@
           </a-button>
         </template>
         <template v-if="column.key === 'actions'">
-          <div class="actions">
-            <tooltip-button :tooltip="$t('label.edit')" icon="edit-outlined" @onClick="() => openEditRuleModal(record)" />
-            <tooltip-button :tooltip="$t('label.edit.tags')" :disabled="!('updateLoadBalancerRule' in $store.getters.apis)" icon="tag-outlined" @onClick="() => openTagsModal(record.id)" />
+          <div class="rule-actions" role="group" :aria-label="$t('label.actions')">
+            <a-button v-if="'addInstanceProxy' in $store.getters.apis && record.state === 'Active' && record.protocol?.toLowerCase() !== 'udp'" class="rule-actions__expose" type="primary" ghost @click="publishTarget = { ...record, publicip: resource.ipaddress }">
+              <template #icon><global-outlined /></template>
+              {{ $t('label.exposure.web') }}
+            </a-button>
+            <a-tooltip :title="$t('label.edit')">
+              <a-button :aria-label="$t('label.edit')" @click="openEditRuleModal(record)"><template #icon><edit-outlined /></template></a-button>
+            </a-tooltip>
+            <a-tooltip :title="$t('label.edit.tags')">
+              <span><a-button :aria-label="$t('label.edit.tags')" :disabled="!('updateLoadBalancerRule' in $store.getters.apis)" @click="openTagsModal(record.id)"><template #icon><tag-outlined /></template></a-button></span>
+            </a-tooltip>
             <a-popconfirm
               :title="$t('label.delete') + '?'"
               @confirm="handleDeleteRule(record)"
               :okText="$t('label.yes')"
               :cancelText="$t('label.no')"
             >
-              <tooltip-button
-                :tooltip="$t('label.delete')"
-                :disabled="!('deleteLoadBalancerRule' in $store.getters.apis)"
-                type="primary"
-                :danger="true"
-                icon="delete-outlined" />
+              <a-tooltip :title="$t('label.delete')">
+                <span><a-button :aria-label="$t('label.delete')" :disabled="!('deleteLoadBalancerRule' in $store.getters.apis)" danger><template #icon><delete-outlined /></template></a-button></span>
+              </a-tooltip>
             </a-popconfirm>
           </div>
         </template>
@@ -779,6 +784,16 @@
       </a-form>
     </a-modal>
 
+    <a-modal
+      :visible="!!publishTarget"
+      :title="$t('label.exposure.web')"
+      :width="740"
+      :footer="null"
+      :maskClosable="false"
+      destroyOnClose
+      @cancel="publishTarget = null">
+      <PublishLoadBalancer v-if="publishTarget" :resource="resource" :load-balancer="publishTarget" @close-action="publishTarget = null" />
+    </a-modal>
     <bulk-action-view
       v-if="showConfirmationAction || showGroupActionModal"
       :showConfirmationAction="showConfirmationAction"
@@ -803,6 +818,7 @@ import { ref, reactive, toRaw, nextTick } from 'vue'
 import { getAPI, postAPI } from '@/api'
 import { mixinForm } from '@/utils/mixin'
 import Status from '@/components/widgets/Status'
+import PublishLoadBalancer from '@/views/compute/PublishLoadBalancer'
 import TooltipButton from '@/components/widgets/TooltipButton'
 import BulkActionView from '@/components/view/BulkActionView'
 import eventBus from '@/config/eventBus'
@@ -812,6 +828,7 @@ export default {
   name: 'LoadBalancing',
   mixins: [mixinForm],
   components: {
+    PublishLoadBalancer,
     Status,
     TooltipButton,
     BulkActionView,
@@ -838,6 +855,7 @@ export default {
       },
       loading: true,
       lbRules: [],
+      publishTarget: null,
       tagsModalVisible: false,
       tagsModalLoading: false,
       tags: [],
@@ -933,7 +951,8 @@ export default {
         },
         {
           key: 'actions',
-          title: this.$t('label.actions')
+          title: this.$t('label.actions'),
+          width: 232
         }
       ],
       tiers: {
@@ -2510,6 +2529,29 @@ export default {
   .pagination {
     margin-top: 20px;
     text-align: right;
+  }
+
+  .rule-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+
+    :deep(.ant-btn) {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border-radius: 4px;
+      box-shadow: none;
+    }
+
+    :deep(.rule-actions__expose) {
+      width: auto;
+      padding: 0 12px;
+    }
   }
 
   .actions {

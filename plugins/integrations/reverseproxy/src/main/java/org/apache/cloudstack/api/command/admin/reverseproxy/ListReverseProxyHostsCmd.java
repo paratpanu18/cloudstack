@@ -66,6 +66,13 @@ public class ListReverseProxyHostsCmd extends BaseListCmd {
             description = "List proxy hosts only for the specified instance")
     private Long virtualMachineId;
 
+    @Parameter(name = "loadbalancerruleid", type = CommandType.UUID,
+            entityType = org.apache.cloudstack.api.response.FirewallRuleResponse.class,
+            description = "Filter by public load balancer rule")
+    private Long loadBalancerRuleId;
+
+    public Long getLoadBalancerRuleId() { return loadBalancerRuleId; }
+
     /////////////////////////////////////////////////////
     /////////////////// Accessors ///////////////////////
     /////////////////////////////////////////////////////

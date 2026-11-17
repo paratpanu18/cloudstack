@@ -106,7 +106,8 @@ import com.cloud.vm.UserVmVO;
 import com.cloud.vm.VirtualMachine;
 import com.cloud.vm.dao.UserVmDao;
 
-public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements ReverseProxyService, Configurable {
+public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements ReverseProxyService, Configurable,
+        com.cloud.network.lb.LoadBalancerDependencyGuard {
 
     /**
      * A proxy name must be a single valid DNS label (lowercase letters, digits and hyphens,
@@ -172,6 +173,9 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
 
     @Inject
     private FirewallService firewallService;
+
+    @Inject
+    private com.cloud.network.dao.LoadBalancerDao loadBalancerDao;
 
     @Inject
     private PortForwardingRulesDao portForwardingRulesDao;
@@ -501,6 +505,10 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         return publicIpId == null ? operation.get() : withResourceLock("reverseproxy.ip." + publicIpId, operation);
     }
 
+    protected <T> T withLoadBalancerLock(final Long id, final Supplier<T> operation) {
+        return withResourceLock("loadbalancer.endpoint." + id, operation);
+    }
+
     private <T> T withResourceLock(final String key, final Supplier<T> operation) {
         final GlobalLock lock = GlobalLock.getInternLock(key);
         try {
@@ -788,6 +796,147 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         }));
     }
 
+    private void validateTargetSelection(final Long vmId, final Long lbId) {
+        if (vmId != null && lbId != null) throw new InvalidParameterValueException("Specify only one exposure target");
+    }
+
+    protected com.cloud.network.dao.LoadBalancerVO getAccessibleLoadBalancer(final Long id) {
+        final com.cloud.network.dao.LoadBalancerVO lb = id == null ? null : loadBalancerDao.findById(id);
+        if (lb == null) throw new InvalidParameterValueException("Public load balancer rule not found");
+        accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, lb);
+        final NetworkVO network = networkDao.findById(lb.getNetworkId());
+        final IPAddressVO ip = ipAddressDao.findById(lb.getSourceIpAddressId());
+        if (lb.getState() != FirewallRule.State.Active || network == null || network.getGuestType() != Network.GuestType.Isolated
+                || ip == null || !ip.readyToUse() || ip.isOneToOneNat() || ip.getAddress() == null
+                || !NetUtils.isValidIp4(ip.getAddress().addr()) || ip.getAccountId() != lb.getAccountId()
+                || !"tcp".equalsIgnoreCase(lb.getProtocol()) || "udp".equalsIgnoreCase(lb.getLbProtocol())) {
+            throw new InvalidParameterValueException("Select an active public TCP load balancer on an isolated network or VPC tier");
+        }
+        return lb;
+    }
+
+    private boolean canUseLoadBalancerDomain(final Account caller, final com.cloud.network.dao.LoadBalancerVO lb,
+            final ReverseProxyDomainVO domain) {
+        return canUseDomain(caller, null, domain) || (caller != null
+                && reverseProxyDomainMapDao.findByDomainAndNetwork(domain.getId(), lb.getNetworkId()) != null);
+    }
+
+    private ReverseProxyDomainVO resolveLoadBalancerDomain(final Long domainId, final com.cloud.network.dao.LoadBalancerVO lb) {
+        final List<ReverseProxyDomainVO> domains = reverseProxyDomainDao.listAll();
+        if (domainId == null && domains.size() != 1) throw new InvalidParameterValueException("Select a reverse proxy domain suffix");
+        final ReverseProxyDomainVO domain = domainId == null ? domains.get(0) : getDomainByIdOrThrow(domainId);
+        if (!canUseLoadBalancerDomain(CallContext.current().getCallingAccount(), lb, domain)) {
+            throw new InvalidParameterValueException("The domain suffix is not available for this load balancer");
+        }
+        return domain;
+    }
+
+    @Override
+    public void checkLoadBalancerDependency(final long id) {
+        if (!reverseProxyHostDao.listByLoadBalancerRuleId(id).isEmpty()) {
+            throw new InvalidParameterValueException("Remove the load balancer's web addresses before deleting or changing its endpoint");
+        }
+    }
+
+    @Override
+    public ReverseProxyHost createLoadBalancerProxy(final Long id, final String name, final String protocol, final Long domainId) {
+        validateConfiguration();
+        final String scheme = validateProtocol(protocol);
+        if (StringUtils.isNotBlank(name) && !allowCustomName()) throw new InvalidParameterValueException("Custom proxy names are disabled");
+        final com.cloud.network.dao.LoadBalancerVO lb = getAccessibleLoadBalancer(id);
+        final ReverseProxyDomainVO domain = resolveLoadBalancerDomain(domainId, lb);
+        return withDomainLock(domain.getId(), () -> withLoadBalancerLock(id, () -> withPublicIpLock(lb.getSourceIpAddressId(), () -> {
+            final com.cloud.network.dao.LoadBalancerVO current = getAccessibleLoadBalancer(id);
+            resolveLoadBalancerDomain(domain.getId(), current);
+            final IPAddressVO ip = ipAddressDao.findById(current.getSourceIpAddressId());
+            final NpmClient client = getClient();
+            final long certificate = resolveCertificateId(client, domain);
+            final String proxyName = resolveProxyName(name, domain, client);
+            final ReverseProxyHostVO proxy = new ReverseProxyHostVO();
+            proxy.setLoadBalancerRuleId(id);
+            proxy.setName(proxyName);
+            proxy.setFqdn(proxyName + "." + domain.getDomain());
+            proxy.setNetworkId(current.getNetworkId());
+            proxy.setAccountId(current.getAccountId());
+            proxy.setDomainId(current.getDomainId());
+            proxy.setIpAddress(ip.getAddress().addr());
+            proxy.setPublicIpId(ip.getId());
+            proxy.setPublicPort(current.getSourcePortStart());
+            proxy.setForwardPort(current.getSourcePortStart());
+            proxy.setForwardScheme(scheme);
+            proxy.setReverseProxyDomainId(domain.getId());
+            proxy.setPortForwardingRuleManaged(false);
+            proxy.setState(ReverseProxyHost.State.Creating);
+            final ReverseProxyHostVO persisted = reverseProxyHostDao.persist(proxy);
+            if (persisted == null) throw new CloudRuntimeException("Unable to reserve the proxy name");
+            boolean attempted = false;
+            try {
+                final NpmProxyHost request = new NpmProxyHost();
+                request.setDomainNames(List.of(proxy.getFqdn()));
+                request.setForwardHost(proxy.getIpAddress());
+                request.setForwardPort(proxy.getForwardPort());
+                request.setForwardScheme(scheme);
+                request.setCertificateId((int) certificate);
+                request.setSslForced(ReverseProxyForceHttps.value());
+                request.setEnabled(true);
+                request.setMeta(Map.of(PROXY_UUID_META_KEY, proxy.getUuid()));
+                attempted = true;
+                final NpmProxyHost created = client.createProxyHost(request);
+                if (created == null || created.getId() == null) throw new CloudRuntimeException("NPM did not return a host ID");
+                persisted.setNpmProxyHostId(created.getId());
+                persisted.setState(ReverseProxyHost.State.Active);
+                saveProxy(persisted);
+                return persisted;
+            } catch (final Exception error) {
+                persisted.setState(ReverseProxyHost.State.Error);
+                try {
+                    removeProxyResources(persisted, client, attempted);
+                } catch (final Exception cleanup) {
+                    saveProxy(persisted);
+                    throw new CloudRuntimeException("Exposure failed; delete proxy " + persisted.getUuid() + " to retry cleanup", error);
+                }
+                throw new CloudRuntimeException("Failed to publish load balancer: " + error.getMessage(), error);
+            }
+        })));
+    }
+
+    private ReverseProxyHost updateLoadBalancerProxy(final ReverseProxyHostVO proxy, final String name, final String protocol,
+            final Integer port, final Boolean generateName) {
+        final com.cloud.network.dao.LoadBalancerVO lb = getAccessibleLoadBalancer(proxy.getLoadBalancerRuleId());
+        final ReverseProxyDomainVO domain = resolveLoadBalancerDomain(proxy.getReverseProxyDomainId(), lb);
+        if (port != null && !port.equals(lb.getSourcePortStart())) throw new InvalidParameterValueException("The port is fixed by the load balancer rule");
+        if (StringUtils.isNotBlank(name) && Boolean.TRUE.equals(generateName)) throw new InvalidParameterValueException("Name and generatename cannot be combined");
+        if (StringUtils.isNotBlank(name) && !name.equals(proxy.getName()) && !allowCustomName()) throw new InvalidParameterValueException("Custom proxy names are disabled");
+        final NpmClient client = getClient();
+        final NpmProxyHost host = client.findProxyHostByDomain(proxy.getFqdn());
+        if (host == null || host.getId() == null || host.getId() != proxy.getNpmProxyHostId() || host.getMeta() == null
+                || !proxy.getUuid().equals(host.getMeta().get(PROXY_UUID_META_KEY))
+                || !List.of(proxy.getFqdn()).equals(host.getDomainNames())) throw new CloudRuntimeException("NPM host no longer matches this exposure");
+        final String oldName = proxy.getName();
+        final String oldScheme = proxy.getForwardScheme();
+        final String newName = Boolean.TRUE.equals(generateName) ? resolveProxyName(null, domain, client)
+                : StringUtils.isBlank(name) || name.equals(oldName) ? oldName : resolveProxyName(name, domain, client);
+        host.setDomainNames(List.of(newName + "." + domain.getDomain()));
+        host.setForwardScheme(protocol == null ? oldScheme : validateProtocol(protocol));
+        try {
+            client.updateProxyHost(host.getId(), host.getDomainNames(), host.getForwardScheme(), host.getForwardHost(), host.getForwardPort());
+            proxy.setName(newName);
+            proxy.setFqdn(newName + "." + domain.getDomain());
+            proxy.setForwardScheme(host.getForwardScheme());
+            saveProxy(proxy);
+            return proxy;
+        } catch (final Exception error) {
+            host.setDomainNames(List.of(oldName + "." + domain.getDomain()));
+            host.setForwardScheme(oldScheme);
+            proxy.setName(oldName);
+            proxy.setFqdn(oldName + "." + domain.getDomain());
+            proxy.setForwardScheme(oldScheme);
+            try { client.updateProxyHost(host.getId(), host.getDomainNames(), host.getForwardScheme(), host.getForwardHost(), host.getForwardPort()); } catch (final Exception rollback) { proxy.setState(ReverseProxyHost.State.Error); }
+            saveProxy(proxy);
+            throw new CloudRuntimeException("Failed to update load balancer web address", error);
+        }
+    }
+
     protected void saveProxy(final ReverseProxyHostVO proxy) {
         if (!reverseProxyHostDao.update(proxy.getId(), proxy)) {
             throw new CloudRuntimeException("Unable to save instance proxy " + proxy.getUuid());
@@ -888,6 +1037,9 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
                 throw new InvalidParameterValueException("Only an active instance exposure can be edited");
             }
             accountManager.checkAccess(CallContext.current().getCallingAccount(), SecurityChecker.AccessType.OperateEntry, false, proxy);
+            if (proxy.getLoadBalancerRuleId() != null) {
+                return updateLoadBalancerProxy(proxy, name, protocol, port, generateName);
+            }
             final UserVmVO vm = getAccessibleVm(proxy.getVmInstanceId());
             final ReverseProxyDomainVO domain = resolveProxyDomain(proxy.getReverseProxyDomainId(), CallContext.current().getCallingAccount(), vm);
             if (StringUtils.isNotBlank(name) && Boolean.TRUE.equals(generateName)) {
@@ -1042,6 +1194,8 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         if (!allowCustomName()) {
             throw new InvalidParameterValueException("Custom proxy names are disabled; omit name when creating an exposure");
         }
+        validateTargetSelection(cmd.getVirtualMachineId(), cmd.getLoadBalancerRuleId());
+        final com.cloud.network.dao.LoadBalancerVO lb = cmd.getLoadBalancerRuleId() == null ? null : getAccessibleLoadBalancer(cmd.getLoadBalancerRuleId());
         final UserVmVO vm = cmd.getVirtualMachineId() == null ? null : getAccessibleVm(cmd.getVirtualMachineId());
         final CheckInstanceProxyNameResponse response = new CheckInstanceProxyNameResponse();
         String message = null;
@@ -1056,7 +1210,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             final ReverseProxyDomainVO domain;
             try {
                 final Account caller = CallContext.current().getCallingAccount();
-                domain = resolveProxyDomain(domainId, caller, vm);
+                domain = lb == null ? resolveProxyDomain(domainId, caller, vm) : resolveLoadBalancerDomain(domainId, lb);
             } catch (final CloudRuntimeException e) {
                 response.setName(validatedName);
                 response.setMessage(e.getMessage());
@@ -1183,8 +1337,11 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
             throw new CloudRuntimeException("The reverse proxy integration is disabled");
         }
         final Account caller = CallContext.current().getCallingAccount();
+        validateTargetSelection(cmd.getVirtualMachineId(), cmd.getLoadBalancerRuleId());
+        final com.cloud.network.dao.LoadBalancerVO lb = cmd.getLoadBalancerRuleId() == null ? null : getAccessibleLoadBalancer(cmd.getLoadBalancerRuleId());
         final UserVmVO vm = cmd.getVirtualMachineId() != null ? getAccessibleVm(cmd.getVirtualMachineId()) : null;
-        final List<ReverseProxyDomainVO> domains = listAllowedDomains(caller, vm);
+        final List<ReverseProxyDomainVO> domains = lb == null ? listAllowedDomains(caller, vm)
+                : reverseProxyDomainDao.listAll().stream().filter(domain -> canUseLoadBalancerDomain(caller, lb, domain)).collect(java.util.stream.Collectors.toList());
         final Long domainId = cmd.getId();
         final String keyword = cmd.getKeyword();
         final boolean showDetails = isAdmin(caller);
@@ -1314,6 +1471,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         final Account caller = CallContext.current().getCallingAccount();
         final Long proxyId = cmd.getId();
         final Long vmId = cmd.getVirtualMachineId();
+        validateTargetSelection(vmId, cmd.getLoadBalancerRuleId());
         final String keyword = cmd.getKeyword();
 
         final List<Long> permittedAccounts = new ArrayList<>();
@@ -1330,6 +1488,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         accountManager.buildACLSearchBuilder(sb, domainId, isRecursive, permittedAccounts, listProjectResourcesCriteria);
         sb.and("id", sb.entity().getId(), SearchCriteria.Op.EQ);
         sb.and("vmInstanceId", sb.entity().getVmInstanceId(), SearchCriteria.Op.EQ);
+        sb.and("loadBalancerRuleId", sb.entity().getLoadBalancerRuleId(), SearchCriteria.Op.EQ);
         sb.and("fqdn", sb.entity().getFqdn(), SearchCriteria.Op.LIKE);
 
         final SearchCriteria<ReverseProxyHostVO> sc = sb.create();
@@ -1340,6 +1499,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         if (vmId != null) {
             sc.setParameters("vmInstanceId", vmId);
         }
+        if (cmd.getLoadBalancerRuleId() != null) sc.setParameters("loadBalancerRuleId", cmd.getLoadBalancerRuleId());
         if (keyword != null) {
             sc.setParameters("fqdn", "%" + keyword + "%");
         }
@@ -1361,11 +1521,13 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         }
         final Long domainId = cmd.getDomainId();
         final Long vmId = cmd.getVirtualMachineId();
+        validateTargetSelection(vmId, cmd.getLoadBalancerRuleId());
         final String keyword = cmd.getKeyword();
 
         final Filter searchFilter = new Filter(ReverseProxyHostVO.class, "id", true, cmd.getStartIndex(), cmd.getPageSizeVal());
         final SearchBuilder<ReverseProxyHostVO> sb = reverseProxyHostDao.createSearchBuilder();
         sb.and("vmInstanceId", sb.entity().getVmInstanceId(), SearchCriteria.Op.EQ);
+        sb.and("loadBalancerRuleId", sb.entity().getLoadBalancerRuleId(), SearchCriteria.Op.EQ);
         sb.and("fqdn", sb.entity().getFqdn(), SearchCriteria.Op.LIKE);
         sb.and("domainId", sb.entity().getDomainId(), SearchCriteria.Op.IN);
         sb.and("reverseProxyDomainId", sb.entity().getReverseProxyDomainId(), SearchCriteria.Op.EQ);
@@ -1374,6 +1536,7 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         if (vmId != null) {
             sc.setParameters("vmInstanceId", vmId);
         }
+        if (cmd.getLoadBalancerRuleId() != null) sc.setParameters("loadBalancerRuleId", cmd.getLoadBalancerRuleId());
         if (StringUtils.isNotBlank(keyword)) {
             sc.setParameters("fqdn", "%" + keyword.trim() + "%");
         }
@@ -1415,6 +1578,14 @@ public class ReverseProxyManagerImpl extends ComponentLifecycleBase implements R
         final InstanceProxyResponse response = new InstanceProxyResponse();
         response.setObjectName("instanceproxy");
         response.setId(proxy.getUuid());
+        response.setTargetType(proxy.getLoadBalancerRuleId() == null ? "INSTANCE" : "LOAD_BALANCER");
+        if (proxy.getLoadBalancerRuleId() != null) {
+            final com.cloud.network.dao.LoadBalancerVO lb = loadBalancerDao.findById(proxy.getLoadBalancerRuleId());
+            if (lb != null) {
+                response.setLoadBalancerRuleId(lb.getUuid());
+                response.setLoadBalancerName(lb.getName());
+            }
+        }
         response.setName(proxy.getName());
         response.setFqdn(proxy.getFqdn());
         // The proxy hosts are always created with a certificate, therefore https is always available

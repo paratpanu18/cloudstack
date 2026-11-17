@@ -118,6 +118,22 @@ public class InstanceProxyResponse extends BaseResponse {
         this.portForwardingRuleId = portForwardingRuleId;
     }
 
+    @SerializedName("targettype")
+    @Param(description = "INSTANCE or LOAD_BALANCER")
+    private String targetType;
+
+    @SerializedName("loadbalancerruleid")
+    @Param(description = "The public load balancer rule ID")
+    private String loadBalancerRuleId;
+
+    @SerializedName("loadbalancername")
+    @Param(description = "The public load balancer name")
+    private String loadBalancerName;
+
+    public void setTargetType(String value) { targetType = value; }
+    public void setLoadBalancerRuleId(String value) { loadBalancerRuleId = value; }
+    public void setLoadBalancerName(String value) { loadBalancerName = value; }
+
     public String getId() {
         return id;
     }

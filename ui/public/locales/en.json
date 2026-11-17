@@ -4305,5 +4305,13 @@
   "message.ssh.github.fetch": "Unable to fetch GitHub keys. Check your connection and try again.",
   "message.ssh.github.selection": "Select at least one key and give each selected key a nonempty, unique label.",
   "message.ssh.github.imported": "Imported successfully.",
-  "message.ssh.github.importerror": "Unable to import this key. Try again."
+  "message.ssh.github.importerror": "Unable to import this key. Try again.",
+  "label.exposure.add.web": "Add web address",
+  "label.exposure.title": "Expose to internet",
+  "label.exposure.web": "Expose",
+  "message.exposure.lb.domain.none": "No domain suffix is available for this load balancer. Ask your administrator to grant access to its account or network.",
+  "message.exposure.lb.none": "No active public TCP load balancer is available on this instance\u2019s networks.",
+  "message.exposure.lb.web": "Publish an existing public load-balanced HTTP/HTTPS port through Nginx Proxy Manager. The load balancer must accept connections from NPM. Its membership and access policy are preserved.",
+  "message.exposure.name.unavailable": "This domain name is unavailable. Choose another name.",
+  "message.exposure.remove.lb.web": "Remove this web address? The load balancer and its members will be retained."
 }

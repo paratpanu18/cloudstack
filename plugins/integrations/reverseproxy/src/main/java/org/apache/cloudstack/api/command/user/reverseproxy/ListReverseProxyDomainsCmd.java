@@ -60,6 +60,13 @@ public class ListReverseProxyDomainsCmd extends BaseCmd {
                     + "granted to the networks of the instance are included as well")
     private Long virtualMachineId;
 
+    @Parameter(name = "loadbalancerruleid", type = CommandType.UUID,
+            entityType = org.apache.cloudstack.api.response.FirewallRuleResponse.class,
+            description = "The public load balancer rule; cannot be combined with virtualmachineid")
+    private Long loadBalancerRuleId;
+
+    public Long getLoadBalancerRuleId() { return loadBalancerRuleId; }
+
     @Parameter(name = ApiConstants.KEYWORD, type = CommandType.STRING, required = false,
             description = "Filter the domain suffixes by keyword")
     private String keyword;

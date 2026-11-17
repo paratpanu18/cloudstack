@@ -58,14 +58,25 @@ public class AddInstanceProxyCmd extends BaseAsyncCmd {
     @Inject
     protected UserVmDao userVmDao;
 
+    @Inject
+    protected com.cloud.network.dao.LoadBalancerDao loadBalancerDao;
+
     /////////////////////////////////////////////////////
     //////////////// API parameters /////////////////////
     /////////////////////////////////////////////////////
 
     @ACL(accessType = SecurityChecker.AccessType.OperateEntry)
-    @Parameter(name = ApiConstants.VIRTUAL_MACHINE_ID, type = CommandType.UUID, required = true, entityType = UserVmResponse.class,
+    @Parameter(name = ApiConstants.VIRTUAL_MACHINE_ID, type = CommandType.UUID, entityType = UserVmResponse.class,
             description = "The ID of the instance to expose")
     private Long virtualMachineId;
+
+    @ACL(accessType = SecurityChecker.AccessType.OperateEntry)
+    @Parameter(name = "loadbalancerruleid", type = CommandType.UUID,
+            entityType = org.apache.cloudstack.api.response.FirewallRuleResponse.class,
+            description = "The public load balancer rule; cannot be combined with virtualmachineid")
+    private Long loadBalancerRuleId;
+
+    public Long getLoadBalancerRuleId() { return loadBalancerRuleId; }
 
     @Parameter(name = ApiConstants.NAME, type = CommandType.STRING, required = false,
             description = "Optional name (omit for a server generated name; forbidden when custom names are disabled), for example 'my-web' for 'my-web.cloud.company.com'")
@@ -80,7 +91,7 @@ public class AddInstanceProxyCmd extends BaseAsyncCmd {
             description = "The protocol used to forward requests to the instance: http or https")
     private String protocol;
 
-    @Parameter(name = ApiConstants.PORT, type = CommandType.INTEGER, required = true,
+    @Parameter(name = ApiConstants.PORT, type = CommandType.INTEGER,
             description = "The port to expose on the instance")
     private Integer port;
 
@@ -104,7 +115,8 @@ public class AddInstanceProxyCmd extends BaseAsyncCmd {
 
     @Override
     public String getEventDescription() {
-        return "Creating instance reverse proxy for instance " + virtualMachineId;
+        return loadBalancerRuleId == null ? "Creating instance reverse proxy for instance " + virtualMachineId
+                : "Creating reverse proxy for load balancer " + loadBalancerRuleId;
     }
 
     @Override
@@ -147,6 +159,10 @@ public class AddInstanceProxyCmd extends BaseAsyncCmd {
 
     @Override
     public long getEntityOwnerId() {
+        if (loadBalancerRuleId != null) {
+            final com.cloud.network.dao.LoadBalancerVO lb = loadBalancerDao.findById(loadBalancerRuleId);
+            return lb == null ? Account.ACCOUNT_ID_SYSTEM : lb.getAccountId();
+        }
         final UserVmVO vm = virtualMachineId != null ? userVmDao.findById(virtualMachineId) : null;
         // bad id given, parent this command to SYSTEM so ERROR events are tracked
         return vm != null ? vm.getAccountId() : Account.ACCOUNT_ID_SYSTEM;
@@ -154,10 +170,15 @@ public class AddInstanceProxyCmd extends BaseAsyncCmd {
 
     @Override
     public void execute() {
-        if (virtualMachineId == null) {
-            throw new InvalidParameterValueException("Instance ID is required");
+        if ((virtualMachineId == null) == (loadBalancerRuleId == null)) {
+            throw new InvalidParameterValueException("Specify exactly one of virtualmachineid and loadbalancerruleid");
         }
-        final ReverseProxyHost proxy = reverseProxyService.createInstanceProxy(virtualMachineId, name, protocol, port, domainId, networkId, publicIpId, publicPort);
+        if (loadBalancerRuleId != null && (port != null || networkId != null || publicIpId != null || publicPort != null)) {
+            throw new InvalidParameterValueException("Load balancer destination is derived from its rule; omit port, networkid, ipaddressid and publicport");
+        }
+        final ReverseProxyHost proxy = loadBalancerRuleId != null
+                ? reverseProxyService.createLoadBalancerProxy(loadBalancerRuleId, name, protocol, domainId)
+                : reverseProxyService.createInstanceProxy(virtualMachineId, name, protocol, port, domainId, networkId, publicIpId, publicPort);
         if (proxy == null) {
             throw new ServerApiException(ApiErrorCode.INTERNAL_ERROR, "Failed to create the instance proxy");
         }

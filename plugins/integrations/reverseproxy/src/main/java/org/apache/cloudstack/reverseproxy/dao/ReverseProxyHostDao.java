@@ -40,6 +40,8 @@ public interface ReverseProxyHostDao extends GenericDao<ReverseProxyHostVO, Long
      */
     long countByDomainId(long domainId);
 
+    List<ReverseProxyHostVO> listByLoadBalancerRuleId(long ruleId);
+
     /**
      * Lists all active (not removed) proxy hosts on the given reverse proxy domain suffix
      */

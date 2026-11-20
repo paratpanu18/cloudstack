@@ -373,7 +373,7 @@
                     aria-controls="data-disk-options"
                     @click="showDataDisk = !showDataDisk">
                     <caret-right-outlined :rotate="showDataDisk ? 90 : 0" />
-                    {{ $t('label.data.disk') }}
+                    {{ $t('label.data.disk') }} ({{ $t('label.optional') }})
                   </button>
                   <span v-else>{{ imageType === 'templateid' ? $t('label.data.disk') : $t('label.disk.size') }}</span>
                 </template>
@@ -403,7 +403,7 @@
                     aria-controls="data-disk-options"
                     @click="showDataDisk = !showDataDisk">
                     <caret-right-outlined :rotate="showDataDisk ? 90 : 0" />
-                    {{ $t('label.data.disk') }}
+                    {{ $t('label.data.disk') }} ({{ $t('label.optional') }})
                   </button>
                   <span v-else>{{ imageType === 'templateid' ? $t('label.data.disk') : $t('label.disk.size') }}</span>
                 </template>
@@ -516,8 +516,93 @@
                 </template>
               </a-step>
               <a-step
+                :title="$t('label.ovf.properties')"
+                :status="zoneSelected ? 'process' : 'wait'"
+                v-if="vm.templateid && templateProperties && Object.keys(templateProperties).length > 0">
+                <template #description>
+                  <div v-for="(props, category) in templateProperties" :key="category">
+                    <a-alert :message="'Category: ' + category + ' (' + props.length + ' properties)'" type="info" />
+                    <div style="margin-left: 15px; margin-top: 10px">
+                      <a-form-item
+                        v-for="(property, propertyIndex) in props"
+                        :key="propertyIndex"
+                        :v-bind="property.key"
+                        :name="'properties.' + escapePropertyKey(property.key)"
+                        :ref="'properties.' + escapePropertyKey(property.key)">
+                        <tooltip-label style="text-transform: capitalize" :title="property.label" :tooltip="property.description"/>
+
+                        <span v-if="property.type && property.type==='boolean'">
+                          <a-switch
+                            v-model:checked="form.properties[escapePropertyKey(property.key)]"
+                            :placeholder="property.description"
+                          />
+                        </span>
+                        <span v-else-if="property.type && (property.type==='int' || property.type==='real')">
+                          <a-input-number
+                            v-model:value="form.properties[escapePropertyKey(property.key)]"
+                            :placeholder="property.description"
+                            :min="getPropertyQualifiers(property.qualifiers, 'number-select').min"
+                            :max="getPropertyQualifiers(property.qualifiers, 'number-select').max" />
+                        </span>
+                        <span v-else-if="property.type && property.type==='string' && property.qualifiers && property.qualifiers.startsWith('ValueMap')">
+                          <a-select
+                            showSearch
+                            optionFilterProp="label"
+                            v-model:value="form.properties[escapePropertyKey(property.key)]"
+                            :placeholder="property.description"
+                            :filterOption="(input, option) => {
+                              return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
+                            }"
+                          >
+                            <a-select-option v-for="opt in getPropertyQualifiers(property.qualifiers, 'select')" :key="opt">
+                              {{ opt }}
+                            </a-select-option>
+                          </a-select>
+                        </span>
+                        <span v-else-if="property.type && property.type==='string' && property.password">
+                          <a-input-password
+                            v-model:value="form.properties[escapePropertyKey(property.key)]"
+                            :placeholder="property.description" />
+                        </span>
+                        <span v-else>
+                          <a-input
+                            v-model:value="form.properties[escapePropertyKey(property.key)]"
+                            :placeholder="property.description" />
+                        </span>
+                      </a-form-item>
+                    </div>
+                  </div>
+                </template>
+              </a-step>
+              <a-step
+                v-if="zoneAllowsBackupOperations"
+                :title="$t('label.backup')"
                 :status="zoneSelected ? 'process' : 'wait'">
-                <template #title>
+                <template #description>
+                  <div v-if="zoneSelected" style="margin-top: 15px">
+                    <deploy-instance-backup-selection
+                      :zoneId="zoneId"
+                      v-model:backupOfferingId="form.backupofferingid"
+                      :backupSchedules="backupSchedules"
+                      @change-backup-offering="onChangeBackupOffering"
+                      @add-backup-schedule="onAddBackupSchedule"
+                      @delete-backup-schedule="backupSchedules = backupSchedules.filter(schedule => schedule.id !== $event.id)" />
+                    <a-form-item class="form-item-hidden">
+                      <a-input v-model:value="form.backupofferingid" />
+                    </a-form-item>
+                  </div>
+                </template>
+              </a-step>
+              <a-step
+                :title="$t('label.advanced.mode')"
+                :status="zoneSelected ? 'process' : 'wait'">
+                <template #description v-if="zoneSelected">
+                  <span>
+                    {{ $t('label.isadvanced') }}
+                    <a-switch v-model:checked="showDetails" style="margin-left: 10px"/>
+                  </span>
+                  <div style="margin-top: 15px" v-if="showDetails">
+                    <div class="startup-script-section">
                   <button
                     id="startup-script-toggle"
                     type="button"
@@ -528,8 +613,7 @@
                     <caret-right-outlined :rotate="showStartupScript ? 90 : 0" />
                     {{ $t('label.startup.script.optional') }}
                   </button>
-                </template>
-                <template #description v-if="zoneSelected">
+
                   <div id="startup-script-options" v-show="showStartupScript">
                     <p>{{ $t('message.startup.script.help') }}</p>
                     <div v-if="this.template && this.template.userdataid">
@@ -640,95 +724,7 @@
                       </div>
                     </div>
                   </div>
-                </template>
-              </a-step>
-              <a-step
-                :title="$t('label.ovf.properties')"
-                :status="zoneSelected ? 'process' : 'wait'"
-                v-if="vm.templateid && templateProperties && Object.keys(templateProperties).length > 0">
-                <template #description>
-                  <div v-for="(props, category) in templateProperties" :key="category">
-                    <a-alert :message="'Category: ' + category + ' (' + props.length + ' properties)'" type="info" />
-                    <div style="margin-left: 15px; margin-top: 10px">
-                      <a-form-item
-                        v-for="(property, propertyIndex) in props"
-                        :key="propertyIndex"
-                        :v-bind="property.key"
-                        :name="'properties.' + escapePropertyKey(property.key)"
-                        :ref="'properties.' + escapePropertyKey(property.key)">
-                        <tooltip-label style="text-transform: capitalize" :title="property.label" :tooltip="property.description"/>
-
-                        <span v-if="property.type && property.type==='boolean'">
-                          <a-switch
-                            v-model:checked="form.properties[escapePropertyKey(property.key)]"
-                            :placeholder="property.description"
-                          />
-                        </span>
-                        <span v-else-if="property.type && (property.type==='int' || property.type==='real')">
-                          <a-input-number
-                            v-model:value="form.properties[escapePropertyKey(property.key)]"
-                            :placeholder="property.description"
-                            :min="getPropertyQualifiers(property.qualifiers, 'number-select').min"
-                            :max="getPropertyQualifiers(property.qualifiers, 'number-select').max" />
-                        </span>
-                        <span v-else-if="property.type && property.type==='string' && property.qualifiers && property.qualifiers.startsWith('ValueMap')">
-                          <a-select
-                            showSearch
-                            optionFilterProp="label"
-                            v-model:value="form.properties[escapePropertyKey(property.key)]"
-                            :placeholder="property.description"
-                            :filterOption="(input, option) => {
-                              return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
-                            }"
-                          >
-                            <a-select-option v-for="opt in getPropertyQualifiers(property.qualifiers, 'select')" :key="opt">
-                              {{ opt }}
-                            </a-select-option>
-                          </a-select>
-                        </span>
-                        <span v-else-if="property.type && property.type==='string' && property.password">
-                          <a-input-password
-                            v-model:value="form.properties[escapePropertyKey(property.key)]"
-                            :placeholder="property.description" />
-                        </span>
-                        <span v-else>
-                          <a-input
-                            v-model:value="form.properties[escapePropertyKey(property.key)]"
-                            :placeholder="property.description" />
-                        </span>
-                      </a-form-item>
                     </div>
-                  </div>
-                </template>
-              </a-step>
-              <a-step
-                v-if="zoneAllowsBackupOperations"
-                :title="$t('label.backup')"
-                :status="zoneSelected ? 'process' : 'wait'">
-                <template #description>
-                  <div v-if="zoneSelected" style="margin-top: 15px">
-                    <deploy-instance-backup-selection
-                      :zoneId="zoneId"
-                      v-model:backupOfferingId="form.backupofferingid"
-                      :backupSchedules="backupSchedules"
-                      @change-backup-offering="onChangeBackupOffering"
-                      @add-backup-schedule="onAddBackupSchedule"
-                      @delete-backup-schedule="backupSchedules = backupSchedules.filter(schedule => schedule.id !== $event.id)" />
-                    <a-form-item class="form-item-hidden">
-                      <a-input v-model:value="form.backupofferingid" />
-                    </a-form-item>
-                  </div>
-                </template>
-              </a-step>
-              <a-step
-                :title="$t('label.advanced.mode')"
-                :status="zoneSelected ? 'process' : 'wait'">
-                <template #description v-if="zoneSelected">
-                  <span>
-                    {{ $t('label.isadvanced') }}
-                    <a-switch v-model:checked="showDetails" style="margin-left: 10px"/>
-                  </span>
-                  <div style="margin-top: 15px" v-if="showDetails">
                     <div
                       v-if="['KVM', 'VMware', 'XenServer'].includes(hypervisor) && ((vm.templateid && template && !template.deployasis) || vm.isoid)">
                       <a-form-item :label="$t('label.boottype')" name="boottype" ref="boottype">

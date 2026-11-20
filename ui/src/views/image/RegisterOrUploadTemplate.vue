@@ -421,7 +421,7 @@
               name="userdataid"
               ref="userdataid">
               <template #label>
-                <tooltip-label :title="$t('label.user.data')" :tooltip="linkUserDataParams.userdataid.description"/>
+                <tooltip-label :title="$t('label.user.data')" :tooltip="$t('label.user.data.registered')"/>
               </template>
               <a-select
                 showSearch
@@ -430,7 +430,7 @@
                   return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
                 }"
                 v-model:value="userdataid"
-                :placeholder="linkUserDataParams.userdataid.description"
+                :placeholder="$t('label.user.data.registered')"
                 :loading="userdata.loading">
                 <a-select-option v-for="opt in userdata.opts" :key="opt.id" :label="opt.name || opt.description">
                   {{ opt.name || opt.description }}
@@ -441,18 +441,18 @@
           <a-col :md="24" :lg="12">
             <a-form-item ref="userdatapolicy" name="userdatapolicy">
               <template #label>
-                <tooltip-label :title="$t('label.user.data.policy')" :tooltip="linkUserDataParams.userdatapolicy.description"/>
+                <tooltip-label :title="$t('label.user.data.policy')" :tooltip="$t('label.user.data.policy.tooltip')"/>
               </template>
               <a-select
                 showSearch
                 v-model:value="userdatapolicy"
-                :placeholder="linkUserDataParams.userdatapolicy.description"
+                :placeholder="$t('label.user.data.policy')"
                 optionFilterProp="label"
                 :filterOption="(input, option) => {
                   return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
                 }" >
-                <a-select-option v-for="opt in userdatapolicylist.opts" :key="opt.id" :label="opt.id || opt.description">
-                  {{ opt.id || opt.description }}
+                <a-select-option v-for="opt in userdatapolicylist.opts" :key="opt.id" :label="opt.id ? $t('label.startup.script.policy.' + opt.id.toUpperCase()) : opt.description">
+                  {{ opt.id ? $t('label.startup.script.policy.' + opt.id.toUpperCase()) : opt.description }}
                 </a-select-option>
               </a-select>
             </a-form-item>

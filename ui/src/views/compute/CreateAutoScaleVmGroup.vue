@@ -768,11 +768,11 @@
                       <a-card>
                         <div v-if="this.template && this.template.userdataid">
                           <a-typography-text>
-                            Userdata "{{ $t(this.template.userdataname) }}" is linked with template "{{ $t(this.template.name) }}" with override policy "{{ $t(this.template.userdatapolicy) }}"
+                            {{ $t('message.startup.script.linked.template', { image: this.template.name, script: this.template.userdataname, policy: $t('label.startup.script.policy.' + this.template.userdatapolicy) }) }}
                           </a-typography-text><br/><br/>
                           <div v-if="templateUserDataParams.length > 0 && !doUserdataOverride">
                             <a-typography-text v-if="this.template && this.template.userdataid && templateUserDataParams.length > 0">
-                              Enter the values for the variables in userdata
+                              {{ $t('message.startup.script.params') }}
                             </a-typography-text>
                             <a-input-group>
                               <a-table
@@ -844,7 +844,8 @@
                                   <div v-else>
                                     <a-form-item name="userdata" ref="userdata" >
                                       <a-textarea
-                                        placeholder="Userdata"
+                                        :placeholder="$t('label.startup.script.placeholder')"
+                                        :rows="8"
                                         v-model:value="form.userdata">
                                       </a-textarea>
                                     </a-form-item>

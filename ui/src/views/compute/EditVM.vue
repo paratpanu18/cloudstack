@@ -86,9 +86,12 @@
       </a-form-item>
       <a-form-item v-if="userDataEnabled">
         <template #label>
-          <tooltip-label :title="$t('label.user.data')" :tooltip="apiParams.userdata.description"/>
+          <tooltip-label :title="$t('label.user.data')" :tooltip="$t('message.startup.script.help')"/>
         </template>
-        <a-textarea v-model:value="form.userdata">
+        <a-textarea
+          v-model:value="form.userdata"
+          :placeholder="$t('label.startup.script.placeholder')"
+          :rows="8">
         </a-textarea>
       </a-form-item>
       <a-form-item v-if="extraConfigEnabled">

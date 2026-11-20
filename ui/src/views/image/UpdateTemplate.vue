@@ -125,7 +125,7 @@
                   return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
                 }"
                 v-model:value="userdataid"
-                :placeholder="linkUserDataParams.userdataid.description"
+                :placeholder="$t('label.user.data.registered')"
                 :loading="userdata.loading">
                 <a-select-option v-for="opt in userdata.opts" :key="opt.id" :label="opt.name || opt.description">
                   {{ opt.name || opt.description }}
@@ -141,13 +141,13 @@
               <a-select
                 showSearch
                 v-model:value="userdatapolicy"
-                :placeholder="linkUserDataParams.userdatapolicy.description"
+                :placeholder="$t('label.user.data.policy')"
                 optionFilterProp="label"
                 :filterOption="(input, option) => {
                   return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0
                 }" >
-                <a-select-option v-for="opt in userdatapolicylist.opts" :key="opt.id" :label="opt.id || opt.description">
-                  {{ opt.id || opt.description }}
+                <a-select-option v-for="opt in userdatapolicylist.opts" :key="opt.id" :label="opt.id ? $t('label.startup.script.policy.' + opt.id.toUpperCase()) : opt.description">
+                  {{ opt.id ? $t('label.startup.script.policy.' + opt.id.toUpperCase()) : opt.description }}
                 </a-select-option>
               </a-select>
             </a-form-item>

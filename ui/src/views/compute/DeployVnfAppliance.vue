@@ -555,11 +555,11 @@
                       <a-card>
                         <div v-if="this.template && this.template.userdataid">
                           <a-typography-text>
-                              Userdata "{{ $t(this.template.userdataname) }}" is linked with template "{{ $t(this.template.name) }}" with override policy "{{ $t(this.template.userdatapolicy) }}"
+                              {{ $t('message.startup.script.linked.template', { image: this.template.name, script: this.template.userdataname, policy: $t('label.startup.script.policy.' + this.template.userdatapolicy) }) }}
                           </a-typography-text><br/><br/>
                           <div v-if="templateUserDataParams.length > 0 && !doUserdataOverride">
                             <a-typography-text v-if="this.template && this.template.userdataid && templateUserDataParams.length > 0">
-                                Enter the values for the variables in userdata
+                                {{ $t('message.startup.script.params') }}
                             </a-typography-text>
                             <a-input-group>
                               <a-table
@@ -580,11 +580,11 @@
                         </div>
                         <div v-if="this.iso && this.iso.userdataid">
                           <a-typography-text>
-                              Userdata "{{ $t(this.iso.userdataname) }}" is linked with ISO "{{ $t(this.iso.name) }}" with override policy "{{ $t(this.iso.userdatapolicy) }}"
+                              {{ $t('message.startup.script.linked.iso', { image: this.iso.name, script: this.iso.userdataname, policy: $t('label.startup.script.policy.' + this.iso.userdatapolicy) }) }}
                           </a-typography-text><br/><br/>
                           <div v-if="templateUserDataParams.length > 0 && !doUserdataOverride">
                             <a-typography-text v-if="this.iso && this.iso.userdataid && templateUserDataParams.length > 0">
-                                Enter the values for the variables in userdata
+                                {{ $t('message.startup.script.params') }}
                             </a-typography-text>
                             <a-input-group>
                               <a-table
@@ -605,11 +605,11 @@
                         </div><br/><br/>
                         <div v-if="userdataDefaultOverridePolicy === 'ALLOWOVERRIDE' || userdataDefaultOverridePolicy === 'APPEND' || !userdataDefaultOverridePolicy">
                           <span v-if="userdataDefaultOverridePolicy === 'ALLOWOVERRIDE'" >
-                            {{ $t('label.user.data.do.override') }}
+                            {{ $t(vm.isoid ? 'label.startup.script.replace.iso' : 'label.user.data.do.override') }}
                             <a-switch v-model:checked="doUserdataOverride" style="margin-left: 10px"/>
                           </span>
                           <span v-if="userdataDefaultOverridePolicy === 'APPEND'">
-                            {{ $t('label.user.data.do.append') }}
+                            {{ $t(vm.isoid ? 'label.startup.script.append.iso' : 'label.user.data.do.append') }}
                             <a-switch v-model:checked="doUserdataAppend" style="margin-left: 10px"/>
                           </span>
                           <a-step
@@ -660,7 +660,8 @@
                                   <div v-else>
                                     <a-form-item name="userdata" ref="userdata" >
                                       <a-textarea
-                                        placeholder="Userdata"
+                                        :placeholder="$t('label.startup.script.placeholder')"
+                                        :rows="8"
                                         v-model:value="form.userdata">
                                       </a-textarea>
                                     </a-form-item>

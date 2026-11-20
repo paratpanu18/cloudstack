@@ -361,53 +361,83 @@
                 </template>
               </a-step>
               <a-step
-                :title="$t('label.data.disk')"
                 :status="zoneSelected ? 'process' : 'wait'"
                 v-if="template && !template.deployasis && template.childtemplates && template.childtemplates.length > 0" >
+                <template #title>
+                  <button
+                    v-if="imageType === 'templateid' && !isTemplateHypervisorExternal"
+                    id="data-disk-toggle"
+                    type="button"
+                    class="optional-section-toggle"
+                    :aria-expanded="showDataDisk"
+                    aria-controls="data-disk-options"
+                    @click="showDataDisk = !showDataDisk">
+                    <caret-right-outlined :rotate="showDataDisk ? 90 : 0" />
+                    {{ $t('label.data.disk') }}
+                  </button>
+                  <span v-else>{{ imageType === 'templateid' ? $t('label.data.disk') : $t('label.disk.size') }}</span>
+                </template>
                 <template #description>
-                  <div v-if="zoneSelected">
-                    <multi-disk-selection
-                      :items="template.childtemplates"
-                      :diskOfferings="options.diskOfferings"
-                      :zoneId="zoneId"
-                      @select-multi-disk-offering="updateMultiDiskOffering($event)" />
+                  <div id="data-disk-options" v-show="imageType !== 'templateid' || isTemplateHypervisorExternal || showDataDisk">
+                    <div v-if="zoneSelected">
+                      <multi-disk-selection
+                        :items="template.childtemplates"
+                        :diskOfferings="options.diskOfferings"
+                        :zoneId="zoneId"
+                        @select-multi-disk-offering="updateMultiDiskOffering($event)" />
+                    </div>
                   </div>
                 </template>
               </a-step>
               <a-step
                 v-else
-                :title="imageType === 'templateid' ? $t('label.data.disk') : $t('label.disk.size')"
                 :disabled="isTemplateHypervisorExternal ? true : false"
                 :status="zoneSelected ? 'process' : 'wait'">
+                <template #title>
+                  <button
+                    v-if="imageType === 'templateid' && !isTemplateHypervisorExternal"
+                    id="data-disk-toggle"
+                    type="button"
+                    class="optional-section-toggle"
+                    :aria-expanded="showDataDisk"
+                    aria-controls="data-disk-options"
+                    @click="showDataDisk = !showDataDisk">
+                    <caret-right-outlined :rotate="showDataDisk ? 90 : 0" />
+                    {{ $t('label.data.disk') }}
+                  </button>
+                  <span v-else>{{ imageType === 'templateid' ? $t('label.data.disk') : $t('label.disk.size') }}</span>
+                </template>
                 <template #description>
-                  <div v-if="zoneSelected && !isTemplateHypervisorExternal">
-                    <disk-offering-selection
-                      :items="options.diskOfferings"
-                      :row-count="rowCount.diskOfferings"
-                      :zoneId="zoneId"
-                      :value="diskOffering ? diskOffering.id : ''"
-                      :loading="loading.diskOfferings"
-                      :preFillContent="dataPreFill"
-                      :isIsoSelected="imageType==='isoid'"
-                      @on-selected-disk-size="onSelectDiskSize"
-                      @select-disk-offering-item="($event) => updateDiskOffering($event)"
-                      @handle-search-filter="($event) => handleSearchFilter('diskOfferings', $event)"
-                    ></disk-offering-selection>
-                    <disk-size-selection
-                      v-if="diskOffering && (diskOffering.iscustomized || diskOffering.iscustomizediops)"
-                      input-decorator="size"
-                      :preFillContent="dataPreFill"
-                      :diskSelected="diskSelected"
-                      :isCustomized="diskOffering.iscustomized"
-                      @handler-error="handlerError"
-                      @update-disk-size="updateFieldValue"
-                      @update-iops-value="updateIOPSValue"/>
-                    <a-form-item class="form-item-hidden">
-                      <a-input v-model:value="form.size"/>
-                    </a-form-item>
-                  </div>
-                  <div v-else-if="isTemplateHypervisorExternal" style="margin-bottom: 20px; margin-top: 7px">
-                    {{ $t('message.host.external.datadisk') }}
+                  <div id="data-disk-options" v-show="imageType !== 'templateid' || isTemplateHypervisorExternal || showDataDisk">
+                    <div v-if="zoneSelected && !isTemplateHypervisorExternal">
+                      <disk-offering-selection
+                        :items="options.diskOfferings"
+                        :row-count="rowCount.diskOfferings"
+                        :zoneId="zoneId"
+                        :value="diskOffering ? diskOffering.id : ''"
+                        :loading="loading.diskOfferings"
+                        :preFillContent="dataPreFill"
+                        :isIsoSelected="imageType==='isoid'"
+                        @on-selected-disk-size="onSelectDiskSize"
+                        @select-disk-offering-item="($event) => updateDiskOffering($event)"
+                        @handle-search-filter="($event) => handleSearchFilter('diskOfferings', $event)"
+                      ></disk-offering-selection>
+                      <disk-size-selection
+                        v-if="diskOffering && (diskOffering.iscustomized || diskOffering.iscustomizediops)"
+                        input-decorator="size"
+                        :preFillContent="dataPreFill"
+                        :diskSelected="diskSelected"
+                        :isCustomized="diskOffering.iscustomized"
+                        @handler-error="handlerError"
+                        @update-disk-size="updateFieldValue"
+                        @update-iops-value="updateIOPSValue"/>
+                      <a-form-item class="form-item-hidden">
+                        <a-input v-model:value="form.size"/>
+                      </a-form-item>
+                    </div>
+                    <div v-else-if="isTemplateHypervisorExternal" style="margin-bottom: 20px; margin-top: 7px">
+                      {{ $t('message.host.external.datadisk') }}
+                    </div>
                   </div>
                 </template>
               </a-step>
@@ -482,6 +512,133 @@
                       @select-ssh-key-pair-item="($event) => updateSshKeyPairs($event)"
                       @handle-search-filter="($event) => handleSearchFilter('sshKeyPairs', $event)"
                     />
+                  </div>
+                </template>
+              </a-step>
+              <a-step
+                :status="zoneSelected ? 'process' : 'wait'">
+                <template #title>
+                  <button
+                    id="startup-script-toggle"
+                    type="button"
+                    class="optional-section-toggle"
+                    :aria-expanded="showStartupScript"
+                    aria-controls="startup-script-options"
+                    @click="showStartupScript = !showStartupScript">
+                    <caret-right-outlined :rotate="showStartupScript ? 90 : 0" />
+                    {{ $t('label.startup.script.optional') }}
+                  </button>
+                </template>
+                <template #description v-if="zoneSelected">
+                  <div id="startup-script-options" v-show="showStartupScript">
+                    <p>{{ $t('message.startup.script.help') }}</p>
+                    <div v-if="this.template && this.template.userdataid">
+                      <a-typography-text>
+                        {{ $t('message.startup.script.linked.template', { image: this.template.name, script: this.template.userdataname, policy: $t('label.startup.script.policy.' + this.template.userdatapolicy) }) }}
+                      </a-typography-text><br/><br/>
+                      <div v-if="templateUserDataParams.length > 0 && !doUserdataOverride">
+                        <a-typography-text v-if="this.template && this.template.userdataid && templateUserDataParams.length > 0">
+                          {{ $t('message.startup.script.params') }}
+                        </a-typography-text>
+                        <a-input-group>
+                          <a-table
+                            size="small"
+                            style="overflow-y: auto"
+                            :columns="userDataParamCols"
+                            :dataSource="templateUserDataParams"
+                            :pagination="false"
+                            :rowKey="record => record.key">
+                            <template #bodyCell="{ column, record }">
+                              <template v-if="column.key === 'value'">
+                                <a-input v-model:value="templateUserDataValues[record.key]" />
+                              </template>
+                            </template>
+                          </a-table>
+                        </a-input-group>
+                      </div>
+                    </div>
+                    <div v-if="this.iso && this.iso.userdataid">
+                      <a-typography-text>
+                        {{ $t('message.startup.script.linked.iso', { image: this.iso.name, script: this.iso.userdataname, policy: $t('label.startup.script.policy.' + this.iso.userdatapolicy) }) }}
+                      </a-typography-text><br/><br/>
+                      <div v-if="templateUserDataParams.length > 0 && !doUserdataOverride">
+                        <a-typography-text v-if="this.iso && this.iso.userdataid && templateUserDataParams.length > 0">
+                          {{ $t('message.startup.script.params') }}
+                        </a-typography-text>
+                        <a-input-group>
+                          <a-table
+                            size="small"
+                            style="overflow-y: auto"
+                            :columns="userDataParamCols"
+                            :dataSource="templateUserDataParams"
+                            :pagination="false"
+                            :rowKey="record => record.key">
+                            <template #bodyCell="{ column, record }">
+                              <template v-if="column.key === 'value'">
+                                <a-input v-model:value="templateUserDataValues[record.key]" />
+                              </template>
+                            </template>
+                          </a-table>
+                        </a-input-group>
+                      </div>
+                    </div>
+                    <div v-if="userdataDefaultOverridePolicy === 'ALLOWOVERRIDE' || userdataDefaultOverridePolicy === 'APPEND' || !userdataDefaultOverridePolicy">
+                      <span v-if="userdataDefaultOverridePolicy === 'ALLOWOVERRIDE'" >
+                        {{ $t(vm.isoid ? 'label.startup.script.replace.iso' : 'label.user.data.do.override') }}
+                        <a-switch v-model:checked="doUserdataOverride" style="margin-left: 10px"/>
+                      </span>
+                      <span v-if="userdataDefaultOverridePolicy === 'APPEND'">
+                        {{ $t(vm.isoid ? 'label.startup.script.append.iso' : 'label.user.data.do.append') }}
+                        <a-switch v-model:checked="doUserdataAppend" style="margin-left: 10px"/>
+                      </span>
+                      <div v-if="doUserdataOverride || doUserdataAppend || !userdataDefaultOverridePolicy" style="margin-top: 15px">
+                        <a-card
+                          :tabList="userdataTabList"
+                          :activeTabKey="userdataTabKey"
+                          @tabChange="key => onUserdataTabChange(key, 'userdataTabKey')">
+                          <div v-show="userdataTabKey === 'userdataregistered'">
+                            <user-data-selection
+                              v-if="isUserAllowedToListUserDatas"
+                              :value="form.userdataid"
+                              :items="options.userDatas"
+                              :row-count="rowCount.userDatas"
+                              :zoneId="zoneId"
+                              :disabled="userdataDefaultOverridePolicy === 'DENYOVERRIDE'"
+                              :loading="loading.userDatas"
+                              :preFillContent="dataPreFill"
+                              @select-user-data-item="($event) => updateUserData($event)"
+                              @handle-search-filter="($event) => handleSearchFilter('userData', $event)"
+                            />
+                            <div v-if="userDataParams.length > 0">
+                              <a-input-group>
+                                <a-table
+                                  size="small"
+                                  style="overflow-y: auto"
+                                  :columns="userDataParamCols"
+                                  :dataSource="userDataParams"
+                                  :pagination="false"
+                                  :rowKey="record => record.key">
+                                  <template #bodyCell="{ column, record }">
+                                    <template v-if="column.key === 'value'">
+                                      <a-input v-model:value="userDataValues[record.key]" />
+                                    </template>
+                                  </template>
+                                </a-table>
+                              </a-input-group>
+                            </div>
+                          </div>
+                          <div v-show="userdataTabKey === 'userdatatext'">
+                            <a-form-item name="userdata" ref="userdata" >
+                              <a-textarea
+                                :placeholder="$t('label.startup.script.placeholder')"
+                                :rows="8"
+                                v-model:value="form.userdata">
+                              </a-textarea>
+                            </a-form-item>
+                          </div>
+                        </a-card>
+                      </div>
+                    </div>
                   </div>
                 </template>
               </a-step>
@@ -645,127 +802,6 @@
                         </a-form-item>
                       </a-col>
                     </a-row>
-                    <a-form-item :label="$t('label.user.data')">
-                      <a-card>
-                        <div v-if="this.template && this.template.userdataid">
-                          <a-typography-text>
-                            Userdata "{{ $t(this.template.userdataname) }}" is linked with template "{{ $t(this.template.name) }}" with override policy "{{ $t(this.template.userdatapolicy) }}"
-                          </a-typography-text><br/><br/>
-                          <div v-if="templateUserDataParams.length > 0 && !doUserdataOverride">
-                            <a-typography-text v-if="this.template && this.template.userdataid && templateUserDataParams.length > 0">
-                              Enter the values for the variables in userdata
-                            </a-typography-text>
-                            <a-input-group>
-                              <a-table
-                                size="small"
-                                style="overflow-y: auto"
-                                :columns="userDataParamCols"
-                                :dataSource="templateUserDataParams"
-                                :pagination="false"
-                                :rowKey="record => record.key">
-                                <template #bodyCell="{ column, record }">
-                                  <template v-if="column.key === 'value'">
-                                    <a-input v-model:value="templateUserDataValues[record.key]" />
-                                  </template>
-                                </template>
-                              </a-table>
-                            </a-input-group>
-                          </div>
-                        </div>
-                        <div v-if="this.iso && this.iso.userdataid">
-                          <a-typography-text>
-                            Userdata "{{ $t(this.iso.userdataname) }}" is linked with ISO "{{ $t(this.iso.name) }}" with override policy "{{ $t(this.iso.userdatapolicy) }}"
-                          </a-typography-text><br/><br/>
-                          <div v-if="templateUserDataParams.length > 0 && !doUserdataOverride">
-                            <a-typography-text v-if="this.iso && this.iso.userdataid && templateUserDataParams.length > 0">
-                              Enter the values for the variables in userdata
-                            </a-typography-text>
-                            <a-input-group>
-                              <a-table
-                                size="small"
-                                style="overflow-y: auto"
-                                :columns="userDataParamCols"
-                                :dataSource="templateUserDataParams"
-                                :pagination="false"
-                                :rowKey="record => record.key">
-                                <template #bodyCell="{ column, record }">
-                                  <template v-if="column.key === 'value'">
-                                    <a-input v-model:value="templateUserDataValues[record.key]" />
-                                  </template>
-                                </template>
-                              </a-table>
-                            </a-input-group>
-                          </div>
-                        </div><br/><br/>
-                        <div v-if="userdataDefaultOverridePolicy === 'ALLOWOVERRIDE' || userdataDefaultOverridePolicy === 'APPEND' || !userdataDefaultOverridePolicy">
-                          <span v-if="userdataDefaultOverridePolicy === 'ALLOWOVERRIDE'" >
-                            {{ $t('label.user.data.do.override') }}
-                            <a-switch v-model:checked="doUserdataOverride" style="margin-left: 10px"/>
-                          </span>
-                          <span v-if="userdataDefaultOverridePolicy === 'APPEND'">
-                            {{ $t('label.user.data.do.append') }}
-                            <a-switch v-model:checked="doUserdataAppend" style="margin-left: 10px"/>
-                          </span>
-                          <a-step
-                            :status="zoneSelected ? 'process' : 'wait'">
-                            <template #description>
-                              <div v-if="doUserdataOverride || doUserdataAppend || !userdataDefaultOverridePolicy" style="margin-top: 15px">
-                                <a-card
-                                  :tabList="userdataTabList"
-                                  :activeTabKey="userdataTabKey"
-                                  @tabChange="key => onUserdataTabChange(key, 'userdataTabKey')">
-                                  <div v-if="userdataTabKey === 'userdataregistered'">
-                                    <a-step
-                                      v-if="isUserAllowedToListUserDatas"
-                                      :status="zoneSelected ? 'process' : 'wait'">
-                                      <template #description>
-                                        <div v-if="zoneSelected">
-                                          <user-data-selection
-                                            :items="options.userDatas"
-                                            :row-count="rowCount.userDatas"
-                                            :zoneId="zoneId"
-                                            :disabled="template.userdatapolicy === 'DENYOVERRIDE'"
-                                            :loading="loading.userDatas"
-                                            :preFillContent="dataPreFill"
-                                            @select-user-data-item="($event) => updateUserData($event)"
-                                            @handle-search-filter="($event) => handleSearchFilter('userData', $event)"
-                                          />
-                                          <div v-if="userDataParams.length > 0">
-                                            <a-input-group>
-                                              <a-table
-                                                size="small"
-                                                style="overflow-y: auto"
-                                                :columns="userDataParamCols"
-                                                :dataSource="userDataParams"
-                                                :pagination="false"
-                                                :rowKey="record => record.key">
-                                                <template #bodyCell="{ column, record }">
-                                                  <template v-if="column.key === 'value'">
-                                                    <a-input v-model:value="userDataValues[record.key]" />
-                                                  </template>
-                                                </template>
-                                              </a-table>
-                                            </a-input-group>
-                                          </div>
-                                        </div>
-                                      </template>
-                                    </a-step>
-                                  </div>
-                                  <div v-else>
-                                    <a-form-item name="userdata" ref="userdata" >
-                                      <a-textarea
-                                        placeholder="Userdata"
-                                        v-model:value="form.userdata">
-                                      </a-textarea>
-                                    </a-form-item>
-                                  </div>
-                                </a-card>
-                              </div>
-                            </template>
-                          </a-step>
-                        </div>
-                      </a-card>
-                    </a-form-item>
                     <a-form-item v-if="extraConfigEnabled" name="extraconfig" ref="extraconfig">
                       <template #label>
                         <tooltip-label :title="$t('label.extraconfig')" :tooltip="$t('label.extraconfig.tooltip')"/>
@@ -1132,9 +1168,11 @@ export default {
       defaultnetworkid: '',
       networkConfig: [],
       dataNetworkCreated: [],
-      userdataTabKey: 'userdataregistered',
+      userdataTabKey: 'userdatatext',
       dataPreFill: {},
       showDetails: false,
+      showDataDisk: false,
+      showStartupScript: false,
       showRootDiskSizeChanger: false,
       showOverrideDiskOfferingOption: false,
       securitygroupids: [],
@@ -1494,13 +1532,15 @@ export default {
     userdataTabList () {
       let tabList = []
       tabList = [{
-        key: 'userdataregistered',
-        tab: this.$t('label.user.data.registered')
-      },
-      {
         key: 'userdatatext',
         tab: this.$t('label.user.data.text')
       }]
+      if (this.isUserAllowedToListUserDatas) {
+        tabList.push({
+          key: 'userdataregistered',
+          tab: this.$t('label.user.data.registered')
+        })
+      }
 
       return tabList
     },
@@ -1748,6 +1788,9 @@ export default {
   created () {
     this.initForm()
     this.dataPreFill = this.preFillContent && Object.keys(this.preFillContent).length > 0 ? this.preFillContent : {}
+    if (this.dataPreFill.userdataid) {
+      this.userdataTabKey = 'userdataregistered'
+    }
     this.fetchData()
   },
   provide () {
@@ -2344,7 +2387,7 @@ export default {
         deployVmData.nicmultiqueuenumber = values.nicmultiqueuenumber
         deployVmData.nicpackedvirtqueuesenabled = values.nicpackedvirtqueuesenabled
         const isUserdataAllowed = !this.userdataDefaultOverridePolicy || (this.userdataDefaultOverridePolicy === 'ALLOWOVERRIDE' && this.doUserdataOverride) || (this.userdataDefaultOverridePolicy === 'APPEND' && this.doUserdataAppend)
-        if (isUserdataAllowed && values.userdata && values.userdata.length > 0) {
+        if (isUserdataAllowed && this.userdataTabKey === 'userdatatext' && values.userdata && values.userdata.length > 0) {
           deployVmData.userdata = this.$toBase64AndURIEncoded(values.userdata)
         }
         if (values.extraconfig && values.extraconfig.length > 0) {
@@ -2474,7 +2517,7 @@ export default {
         }
         // step 7: select ssh key pair
         deployVmData.keypairs = this.sshKeyPairs.join(',')
-        if (isUserdataAllowed) {
+        if (isUserdataAllowed && this.userdataTabKey === 'userdataregistered') {
           deployVmData.userdataid = values.userdataid
         }
 
@@ -2532,7 +2575,7 @@ export default {
             idx++
           }
         }
-        if (isUserdataAllowed && this.userDataValues) {
+        if (isUserdataAllowed && this.userdataTabKey === 'userdataregistered' && this.userDataValues) {
           for (const [key, value] of Object.entries(this.userDataValues)) {
             deployVmData['userdatadetails[' + idx + '].' + `${key}`] = value
             idx++
@@ -3167,7 +3210,6 @@ export default {
     },
     onUserdataTabChange (key, type) {
       this[type] = key
-      this.userDataParams = []
     },
     fetchTemplateNics (template) {
       var nics = []
@@ -3597,6 +3639,19 @@ export default {
 </script>
 
 <style lang="less" scoped>
+  .optional-section-toggle {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
   .card-footer {
     text-align: right;
     margin-top: 2rem;
